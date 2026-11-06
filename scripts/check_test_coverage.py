@@ -1043,8 +1043,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Markdown block, with its line, positions, kind and preview; a block
     # partly mapped reporting only the rest; the receipt still verifying; the
     # page's wording; and every page script scanned for a quoted string
-    # holding a raw line break.
-    "tests/test_source_provenance.py": 63,
+    # holding a raw line break. 74 after its review round, floor band(74) =
+    # 67: a closing fence ending its block under LF and CRLF alike, a CRLF
+    # source reporting the LF entries at its own offsets, and the capsule's
+    # refusal of a carriage return.
+    "tests/test_source_provenance.py": 67,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2599,15 +2602,20 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the aggregate follows to 6498, keeping the same 8 above it; band(n)
 # 6406 -> 6419, the working room below what collects 632 -> 634, and the
 # slack the bands grant 640 -> 642. NO SKIP IS ADDED, and the module joins no
-# platform job, so the windows-runtime job's floor is untouched at 766. The
-# rows below are these.
+# platform job, so the windows-runtime job's floor is untouched at 766. Its
+# review round, re-measured from a fresh collection, grows that module
+# 70 -> 74 (floor 63 -> 67) and moves no other: 7136 collect across 148
+# modules, the module-floor sum rises by 4 to 6494, the aggregate follows to
+# 6502 keeping the same 8 above it, band(n) 6419 -> 6423, and the room below
+# what collects and the slack the bands grant stay 634 and 642. NO SKIP IS
+# ADDED. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     7132   (148 modules)
-#     sum of the module floors    6490
-#     band(7132) = ceil(0.9*n)    6419
-#     MINIMUM_COLLECTED           6498
+#     collected across tests/     7136   (148 modules)
+#     sum of the module floors    6494
+#     band(7136) = ceil(0.9*n)    6423
+#     MINIMUM_COLLECTED           6502
 #     above the module sum          8
 #     below what collects         634
 #
@@ -3100,7 +3108,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6498
+MINIMUM_COLLECTED = 6502
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

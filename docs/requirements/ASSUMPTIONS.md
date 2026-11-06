@@ -8935,6 +8935,15 @@ what nothing maps.
 - The page tests inspect the page source; they do not run its script. The
   new scan checks one class of parse failure, not that the script runs.
 
+**Review of the first head.** A CRLF line kept its carriage return when the
+source was split into lines, so a closing fence was never recognised and the
+fenced block took in everything after it. A line now ends at LF or CRLF and
+is read without its carriage return, while every offset still indexes the
+text as given; LF and CRLF tests pin it, with content after the fence. A
+confirmed specification cannot hold a carriage return today, because the
+capsule refuses control characters, so this guards the block reader rather
+than a path a person can reach.
+
 **Serves.** A person reviewing their specification sees each heading, list
 item, paragraph or example that no requirement maps, on its own line with
 its position, instead of one block covering several sections.

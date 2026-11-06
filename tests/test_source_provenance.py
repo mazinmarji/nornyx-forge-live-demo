@@ -709,3 +709,35 @@ def test_the_page_script_has_no_line_break_inside_a_string_literal():
     # once wrote reached the browser as a real line break.
     assert _line_breaks_inside_js_strings('const a = [1].join("\n");\nlet b = 1;')[:1] == [1]
     assert _line_breaks_inside_js_strings('const a = [1].join("\\n"); // "\nx = `\n`;') == []
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["LF", "CRLF"])
+def test_a_closing_fence_ends_its_block_whatever_the_line_ending(newline):
+    # A CRLF line kept its carriage return, so its closing fence was never
+    # recognised and the fence swallowed what followed (Codex P2 4492746866).
+    text = newline.join(["```", "code", "```", "- first item", "- second item", ""])
+    blocks = source_provenance._blocks(text)
+    assert [kind for _, _, kind in blocks] == ["fenced block", "list item", "list item"]
+    assert [text[start:end] for start, end, _ in blocks] == [
+        newline.join(["```", "code", "```"]), "- first item", "- second item"]
+
+
+def test_a_crlf_source_reports_the_lf_entries_at_its_own_exact_offsets():
+    crlf = BLOCKS_SOURCE.replace("\n", "\r\n")
+    lf_entries = source_provenance._unmapped(BLOCKS_SOURCE, [])
+    crlf_entries = source_provenance._unmapped(crlf, [])
+    assert [(entry["block"], entry["line"]) for entry in crlf_entries] == [
+        (entry["block"], entry["line"]) for entry in lf_entries]
+    for lf, cr in zip(lf_entries, crlf_entries):
+        text = crlf[cr["start"]:cr["end"]]
+        assert text == BLOCKS_SOURCE[lf["start"]:lf["end"]].replace("\n", "\r\n")
+        assert text == text.strip() and cr["characters"] == cr["end"] - cr["start"]
+    after = [entry for entry in crlf_entries if crlf[entry["start"]:].startswith("1. Run it.")]
+    assert after and after[0]["block"] == "list item"
+
+
+def test_a_confirmed_specification_cannot_hold_a_carriage_return():
+    # The capsule refuses a CR in the text, so CRLF reaches the report only
+    # if that rule changes; the block reader handles it anyway.
+    with pytest.raises(CapsuleValidationError, match="control characters"):
+        AUTHORITATIVE_FIELDS["source_specification"]({"text": "line one\r\nline two"})

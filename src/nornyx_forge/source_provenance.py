@@ -150,12 +150,16 @@ def _blocks(source: str) -> list[tuple[int, int, str]]:
     runs on through the following lines until a blank line or a line that
     opens a block, so a nested item is a block of its own. Blank lines belong
     to no block. A table, a quotation, indented code or an underlined heading
-    reads as a paragraph. `end` stops before the last line's terminator.
+    reads as a paragraph. A line ends at LF or CRLF, and `end` stops before
+    the last line's terminator, so a CRLF line is read, and ends its block,
+    without its carriage return while every offset still indexes the text as
+    given (Codex P2 4492746866).
     """
     lines: list[tuple[int, int, str]] = []
     position = 0
     for text in source.split("\n"):
-        lines.append((position, position + len(text), text))
+        body = text[:-1] if text.endswith("\r") else text
+        lines.append((position, position + len(body), body))
         position += len(text) + 1
     blocks: list[tuple[int, int, str]] = []
     index = 0
