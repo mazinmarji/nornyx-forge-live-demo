@@ -1540,13 +1540,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_architect_nyx_validation_goal.py": 1,
     # A review gate passes only on a valid PASS verdict: the verdict contract
     # and its fail-closed parser, 47 collected, floor at band(47) = 43; its
-    # review rounds grew it 47 -> 55 -> 64, floor band(64) = 58.
-    "tests/test_review_verdict.py": 58,
+    # review rounds grew it 47 -> 55 -> 64 -> 71, floor band(71) = 64.
+    "tests/test_review_verdict.py": 64,
     # The same rule through the real DevelopmentFlow, every invalid verdict,
     # FAIL and NOT_VERIFIED rejecting a build: 34 collected, floor at
-    # band(34) = 31; its review rounds grew it 34 -> 41 -> 49, floor
-    # band(49) = 45.
-    "tests/test_review_verdict_gates.py": 45,
+    # band(34) = 31; its review rounds grew it 34 -> 41 -> 49 -> 56, floor
+    # band(56) = 51.
+    "tests/test_review_verdict_gates.py": 51,
 }
 
 # Raised again, from 1120, when round-3 remediation took the suite to 1255 and
@@ -2686,14 +2686,23 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 6519 -> 6534, the room below what collects 643 -> 644, and the slack the
 # bands grant 651 -> 652. NO SKIP IS ADDED.
 #
+# ITS THIRD REVIEW ROUND, re-measured: the verdict now follows a marker line,
+# so the text before it is no longer parsed or counted, and the shared cases
+# are rebuilt around the marker, 45 in all. The parser module grows 64 -> 71
+# (floor 58 -> 64) and the gate module 49 -> 56 (floor 45 -> 51). 7274 collect
+# across 153 modules; the module-floor sum rises by 12 to 6620 and the
+# aggregate follows to 6628, keeping the same 8 above it; band(n) 6534 -> 6547,
+# the room below what collects 644 -> 646, and the slack the bands grant
+# 652 -> 654. NO SKIP IS ADDED.
+#
 # (rows below):
 #
-#     collected across tests/     7260   (153 modules)
-#     sum of the module floors    6608
-#     band(7260) = ceil(0.9*n)    6534
-#     MINIMUM_COLLECTED           6616
+#     collected across tests/     7274   (153 modules)
+#     sum of the module floors    6620
+#     band(7274) = ceil(0.9*n)    6547
+#     MINIMUM_COLLECTED           6628
 #     above the module sum          8
-#     below what collects         644
+#     below what collects         646
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2915,7 +2924,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 652 in total, and the aggregate refuses
+# per-module bands already grant 654 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3184,7 +3193,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6616
+MINIMUM_COLLECTED = 6628
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

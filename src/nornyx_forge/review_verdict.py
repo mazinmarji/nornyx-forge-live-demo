@@ -5,8 +5,11 @@ finished. A reviewer that concluded `NOT_VERIFIED`, or reported a defect, still
 produced a passing gate, because nothing read what it concluded -- and nothing
 could, since reviewers had no verdict contract and each invented its own words.
 
-THE CONTRACT. A reviewer ends its reply with exactly one JSON object:
+THE CONTRACT. A reviewer ends its reply with a line that reads exactly
+`NORNYX-REVIEW-VERDICT`, followed by exactly one JSON object -- alone, or alone
+inside one fenced code block -- and nothing after it:
 
+    NORNYX-REVIEW-VERDICT
     {"schema": "nornyx.forge.review_verdict.v1",
      "role": "<the reviewer's role>",
      "verdict": "PASS" | "FAIL" | "NOT_VERIFIED",
@@ -15,14 +18,18 @@ THE CONTRACT. A reviewer ends its reply with exactly one JSON object:
 
 Exactly those five keys. `PASS` with any blocking finding is invalid.
 
-The object ENDS the reply: only whitespace and one closing Markdown fence may
-follow it. It stands alone, not nested inside another JSON value, complete or
-unfinished: the text before it must close every brace and bracket it opens
-and hold an even number of unescaped double quotes. And the
-schema identifier, however it is spelled -- a JSON escape such as `\\u006e` is
-the same text -- appears nowhere else in the reply. A verdict quoted as an
-example, nested under a key, followed by another conclusion, or accompanied
-by a second or partial object therefore never reads as the reviewer's own.
+WHY A MARKER LINE, and not a search for the last object. Earlier heads found
+the verdict by scanning the reply's free text for JSON, and each review of
+them found a reply shape that scan misread: a verdict nested in an example, in
+an object or array never closed, or behind a stray quote that shifted where
+strings were taken to begin. Inferring structure from text that need not be
+JSON keeps leaving such gaps. A JSON string cannot hold a raw line break and a
+bare word is not a JSON token, so no JSON value written before the marker
+line can extend past it. The text before the marker is therefore never parsed
+or counted; the text after it must decode, strictly and entirely, as one
+object. The marker occurs exactly once, and the schema identifier, however it
+is spelled -- a JSON escape such as `\\u006e` is the same text -- does not
+appear before it, so a second or draft verdict is refused as well.
 
 THE PARSER FAILS CLOSED. `parse_review` reads a worker's recorded output
 exactly as `WorkerResult.output` holds it, and returns `PASS`, `FAIL`,
@@ -229,63 +236,45 @@ def _names_the_schema(text: str) -> bool:
     return REVIEW_VERDICT_SCHEMA in text or REVIEW_VERDICT_SCHEMA in _unescaped(text)
 
 
-def _open_structure(prefix: str) -> str | None:
-    """Why the text before the verdict leaves a JSON value open, or None.
+#: The line that introduces the verdict. A JSON string cannot hold a raw line
+#: break and a bare word is not a JSON token, so no JSON value written before
+#: this line can extend past it: the object after it is never inside one.
+VERDICT_MARKER = "NORNYX-REVIEW-VERDICT"
 
-    The verdict must not sit inside an unfinished object, array or string,
-    so everything before it must close every brace and bracket it opens and
-    hold an even number of unescaped double quotes. Counted without reading
-    the text as JSON, because the text around a verdict need not be JSON:
-    prose that happens to leave one open is refused, which fails closed.
+#: The Markdown fence lines a verdict object may be wrapped in after the marker.
+_FENCE_OPENERS = ("```", "```json")
+_FENCE = "```"
+
+
+def _verdict_block(text: str) -> tuple[str, str] | str:
+    """The text before the marker line and the verdict text after it.
+
+    Returns `(before, verdict_text)`, or the reason no block can be read.
+    The marker must stand alone on exactly one line and occur nowhere else.
+    After it comes the object, alone, or the object alone inside one fenced
+    block; anything else after the marker is not a verdict block.
     """
-    depth = {"{": 0, "[": 0}
-    closes = {"}": "{", "]": "["}
-    quotes = 0
-    backslashes = 0
-    for character in prefix:
-        if character == "\\":
-            backslashes += 1
-            continue
-        escaped = backslashes % 2 == 1
-        backslashes = 0
-        if character == '"' and not escaped:
-            quotes += 1
-        elif character in depth:
-            depth[character] += 1
-        elif character in closes:
-            opener = closes[character]
-            depth[opener] = max(0, depth[opener] - 1)
-    if depth["{"] or depth["["]:
-        return "the verdict sits inside an unfinished object or array"
-    if quotes % 2:
-        return "the verdict sits inside an unfinished string"
-    return None
-
-
-#: The one closing Markdown fence a reply may end with after its verdict.
-_CLOSING_FENCE = "```"
-
-
-def _final_object(text: str) -> tuple[int, int] | None:
-    """The span of the standalone JSON object the reply ENDS with, or None.
-
-    Only whitespace and one closing Markdown fence may follow it. The span is
-    the outermost object ending there, so a verdict nested inside another
-    value is never the candidate: the value that holds it is.
-    """
-    end = len(text.rstrip())
-    if text[:end].endswith(_CLOSING_FENCE):
-        end = len(text[: end - len(_CLOSING_FENCE)].rstrip())
-    index = text.find("{")
-    while index != -1 and index < end:
-        try:
-            value, stop = _LOCATOR.raw_decode(text, index)
-        except (ValueError, RecursionError):
-            value, stop = None, -1
-        if stop == end and isinstance(value, dict):
-            return index, stop
-        index = text.find("{", index + 1)
-    return None
+    if VERDICT_MARKER not in text:
+        return "the reply has no verdict marker line"
+    lines = text.split("\n")
+    marked = [index for index, line in enumerate(lines) if line.strip() == VERDICT_MARKER]
+    if not marked:
+        return "the verdict marker is not on a line of its own"
+    if len(marked) > 1 or text.count(VERDICT_MARKER) > 1:
+        return "the verdict marker appears more than once"
+    index = marked[0]
+    before = "\n".join(lines[:index])
+    after = "\n".join(lines[index + 1:]).strip()
+    if after.startswith(_FENCE):
+        newline = after.find("\n")
+        if newline == -1:
+            return "the text after the verdict marker is not exactly one verdict object"
+        opener = after[:newline].strip()
+        body = after[newline + 1:].rstrip()
+        if opener not in _FENCE_OPENERS or not body.endswith(_FENCE):
+            return "the text after the verdict marker is not exactly one verdict object"
+        after = body[: -len(_FENCE)].strip()
+    return before, after
 
 
 def validate_verdict_object(value: Any, expected_role: str) -> ParsedVerdict:
@@ -341,26 +330,26 @@ def parse_review(output: Any, *, expected_role: str, worker_success: bool) -> Pa
         return _invalid(expected_role, how)
     if len(text) > MAX_RESULT_TEXT:
         return _invalid(expected_role, f"the reply text exceeds {MAX_RESULT_TEXT} characters")
-    span = _final_object(text)
-    if span is None:
-        if _names_the_schema(text):
-            return _invalid(
-                expected_role,
-                "the reply does not end with a decodable, standalone verdict object",
-            )
-        return _invalid(expected_role, "the reply contains no verdict object")
-    start, end = span
-    if _names_the_schema(text[:start]):
+    block = _verdict_block(text)
+    if isinstance(block, str):
+        return _invalid(expected_role, block)
+    before, verdict_text = block
+    if _names_the_schema(before):
         return _invalid(
             expected_role,
-            "the schema identifier appears outside the final verdict object, so "
-            "the reply holds another or a partial verdict",
+            "the schema identifier appears before the verdict marker, so the reply "
+            "holds another or a partial verdict",
         )
-    enclosing = _open_structure(text[:start])
-    if enclosing is not None:
-        return _invalid(expected_role, enclosing)
     try:
-        value = _loads(text[start:end])
+        located, stop = _LOCATOR.raw_decode(verdict_text) if verdict_text.startswith("{") else (None, -1)
+    except (ValueError, RecursionError):
+        located, stop = None, -1
+    if not isinstance(located, dict) or stop != len(verdict_text):
+        return _invalid(
+            expected_role, "the text after the verdict marker is not exactly one verdict object"
+        )
+    try:
+        value = _loads(verdict_text)
     except (ValueError, RecursionError):
         return _invalid(expected_role, "the verdict object is malformed JSON")
     return validate_verdict_object(value, expected_role)
@@ -386,16 +375,15 @@ def verdict_requirement(role: str) -> str:
         '"blocking_findings": ["..."], "evidence_relied_on": ["..."]}'
     )
     return (
-        "End your reply with exactly one JSON object, separate from anything else "
-        "you return, with exactly these five keys: " + template + ". "
-        "Nothing may follow that object except one closing code fence, and it may "
-        "not be nested inside another value: everything before it must close "
-        "every brace, bracket and double quote it opens. "
+        "End your reply with a line containing exactly " + VERDICT_MARKER + ", "
+        "followed by exactly one JSON object, alone or alone inside one fenced "
+        "code block, with exactly these five keys: " + template + ". "
+        "Nothing may follow that object except the closing fence of that block. "
         "Set verdict to exactly one of PASS, FAIL or NOT_VERIFIED. "
         "blocking_findings lists each blocking finding as non-empty text; PASS "
         "requires an empty list. evidence_relied_on lists what you relied on. "
-        "Write the schema identifier nowhere else. A missing, malformed or "
-        "additional verdict object, any other verdict, or any other role is "
-        "treated as a failure, and anything other than a valid PASS rejects "
-        "the build."
+        "Write the marker and the schema identifier nowhere else. A missing "
+        "marker, a missing, malformed or additional verdict object, any other "
+        "verdict, or any other role is treated as a failure, and anything other "
+        "than a valid PASS rejects the build."
     )

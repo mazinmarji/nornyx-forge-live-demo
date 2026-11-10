@@ -17,6 +17,7 @@ from review_verdict_support import (
     REVIEW_ROLES,
     codex_review_output,
     envelope,
+    marked,
     review_output,
     verdict_object,
 )
@@ -26,6 +27,7 @@ from nornyx_forge.review_verdict import (
     PARSED_VERDICTS,
     REVIEW_VERDICT_SCHEMA,
     VERDICT_KEYS,
+    VERDICT_MARKER,
     VERDICTS,
     ParsedVerdict,
     parse_review,
@@ -51,6 +53,7 @@ def _parse(output: str, role: str = "test-inspector", success: bool = True) -> P
 
 def test_the_contract_is_closed():
     assert REVIEW_VERDICT_SCHEMA == "nornyx.forge.review_verdict.v1"
+    assert VERDICT_MARKER == "NORNYX-REVIEW-VERDICT"
     assert VERDICTS == ("PASS", "FAIL", "NOT_VERIFIED")
     assert PARSED_VERDICTS == ("PASS", "FAIL", "NOT_VERIFIED", "INVALID")
     assert VERDICT_KEYS == {"schema", "role", "verdict", "blocking_findings", "evidence_relied_on"}
@@ -63,25 +66,30 @@ def test_a_valid_pass_is_the_only_passing_result(role):
     assert parsed.blocking_findings == () and parsed.role == role
 
 
-def test_a_pass_inside_surrounding_review_text_is_read():
-    text = "Checked every module.\n```json\n" + json.dumps(verdict_object("test-inspector")) + "\n```"
+def test_a_pass_after_the_marker_and_surrounding_review_text_is_read():
+    body = json.dumps(verdict_object("test-inspector"))
+    text = marked("```json\n" + body + "\n```", "Checked every module.")
     assert _parse(envelope(text)).verdict == "PASS"
 
 
-def test_only_whitespace_and_one_closing_fence_may_follow_the_verdict():
+def test_only_the_object_or_one_fenced_object_may_follow_the_marker():
     body = json.dumps(verdict_object("test-inspector"))
-    for text in (body + "\n\n  ", "```json\n" + body + "\n```", "```\n" + body + "\n```\n\n"):
-        assert _parse(envelope(text)).verdict == "PASS", text
-    for text in (body + "\n```\n```", body + " ok", body + "\n```json"):
-        assert _parse(envelope(text)).verdict == "INVALID", text
+    for after in (body + "\n\n  ", "```json\n" + body + "\n```", "```\n" + body + "\n```\n\n",
+                  "\n" + body):
+        assert _parse(envelope(marked(after))).verdict == "PASS", after
+    for after in (body + "\n```\n```", body + " ok", body + "\n```json", "```json " + body + "```"):
+        assert _parse(envelope(marked(after))).verdict == "INVALID", after
 
 
-def test_balanced_text_and_a_json_report_may_precede_the_verdict():
+def test_text_before_the_marker_is_never_parsed_or_counted():
+    """No JSON value can extend past the marker line, so what precedes it --
+    unbalanced braces, brackets or quotes, or a JSON report -- cannot hold the
+    verdict and is not judged. Only a schema mention there is refused."""
     body = json.dumps(verdict_object("test-inspector"))
     report = json.dumps({"checks": ["imports", "boundaries"], "note": "{x} and [y]"})
-    for text in ('Checked {a}, [b] and "c".\n' + body, report + "\n" + body,
-                 'He wrote \\"quoted\\" text.\n' + body):
-        assert _parse(envelope(text)).verdict == "PASS", text
+    for before in ('Checked {a}, [b and "c.', report, '{"verdict": "FAIL", "note": "}", "x": ',
+                   'He wrote \\"quoted text.', "[ \"]\","):
+        assert _parse(envelope(marked(body, before))).verdict == "PASS", before
 
 
 def test_a_fail_carries_its_findings_and_does_not_pass():
@@ -126,13 +134,14 @@ def test_the_codex_event_stream_is_read_from_its_last_agent_message():
     assert _parse(codex_review_output("test-inspector", "FAIL", ("a defect",))).verdict == "FAIL"
     text, how = reply_text(codex_review_output("test-inspector"))
     assert how == "worker JSON event stream"
-    assert json.loads(text)["role"] == "test-inspector"
+    assert text.startswith(VERDICT_MARKER + "\n")
+    assert json.loads(text.split("\n", 1)[1])["role"] == "test-inspector"
 
 
 def test_the_record_cannot_be_read_back_as_a_verdict():
     record = _parse(review_output("test-inspector")).as_dict()
     assert "schema" not in record
-    assert _parse(envelope(json.dumps(record))).verdict == "INVALID"
+    assert _parse(envelope(marked(json.dumps(record)))).verdict == "INVALID"
 
 
 def test_verdict_counts_name_every_kind():
@@ -147,6 +156,7 @@ def test_verdict_counts_name_every_kind():
 def test_the_required_object_is_stated_and_an_echoed_template_never_passes(role):
     requirement = verdict_requirement(role)
     assert REVIEW_VERDICT_SCHEMA in requirement and f'"role": "{role}"' in requirement
+    assert VERDICT_MARKER in requirement
     assert "treated as a failure" in requirement
     assert "anything other than a valid PASS rejects the build" in requirement
     echoed = _parse(envelope(requirement), role)
