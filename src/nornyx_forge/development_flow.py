@@ -15,7 +15,13 @@ from .contract_generator import (
     render_runtime_contract,
 )
 from .evidence import EvidenceLedger
-from .gates import default_gates, trusted_contract_check, trusted_greenfield_gates
+from .gates import (
+    GREENFIELD_IDENTITY_GATE,
+    GREENFIELD_RESOURCE_LIMITS_MISMATCH,
+    default_gates,
+    trusted_contract_check,
+    trusted_greenfield_gates,
+)
 from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .providers import ProviderRoutedWorker, get_provider
@@ -154,6 +160,32 @@ def failing_gate_details(gates: list[GateResult]) -> str:
     is escaped, and the total is not bounded -- a record, not an argument,
     so it is neither sanitised nor held to the composed goal's ceiling."""
     return "\n\n".join(f"{name}: {tail}" for name, tail in _failing_gate_quotes(gates))
+
+
+def unrepairable_environment_refusal(gates: list[GateResult]) -> str | None:
+    """Why no repair can change the outcome, or None when one might.
+
+    One finding only: the trusted verifier could not apply its OS resource
+    limits. It applies them before it reads the project (`greenfield_verifier.
+    main`), so the finding depends on the account Forge runs under -- on POSIX,
+    uid 0 -- and not on anything in the subject. Asking a provider to repair
+    the project for it spent every repair attempt on a refusal the workers
+    themselves reported they could not touch. The gate still fails, exactly
+    as before; only the repair request is withheld.
+    """
+    for gate in gates:
+        if (
+            not gate.passed
+            and gate.name == GREENFIELD_IDENTITY_GATE
+            and GREENFIELD_RESOURCE_LIMITS_MISMATCH in gate.detail
+        ):
+            return (
+                "no repair requested: the trusted verifier could not apply its OS "
+                "resource limits for the account Forge runs under, which it decides "
+                "before reading the project, so no change inside the project can "
+                "alter this gate"
+            )
+    return None
 
 
 def compose_repair_goal(attempt: int, gates: list[GateResult]) -> str:
@@ -405,7 +437,9 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 role="solution-architect",
                 goal=(
                     "Review BRD.md, docs/ARCHITECTURE.md, and the Nornyx contracts. "
-                    "Improve architecture declarations and tests only where required."
+                    "Improve architecture declarations and tests only where required. "
+                    "Any .nyx file you create or change must pass `nornyx check`; run it "
+                    "and fix the file, or record the check's diagnostics as a limitation."
                 ),
                 workspace=self.root,
                 allowed_tools=("Read", "Glob", "Grep", "Edit", "Write", "Bash"),
@@ -510,6 +544,10 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         gates = [*self.pre_gate_failures, *self._acceptance_gates()]
         while not all(gate.passed for gate in gates) and self.worker_mode == "claude-code":
             if self.repair_attempts >= max_repairs:
+                break
+            withheld = unrepairable_environment_refusal(gates)
+            if withheld is not None:
+                self.data["repair_withheld"] = withheld
                 break
             self.repair_attempts += 1
             # The ledger records what the gates said, verbatim; the GOAL is

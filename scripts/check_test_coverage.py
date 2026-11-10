@@ -1525,6 +1525,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_subject_metamorphic.py": 8,
     "tests/test_subject_provenance.py": 8,
     "tests/test_validation_script.py": 1,
+    # Run-diagnostics fixes. Each floor is band(n) of what the module
+    # collects at introduction, on every platform: none of them skips.
+    # Doctor names the uid-0 refusal of the greenfield verifier, its Windows
+    # row claims only what doctor checks, and the verifier's own limit step is
+    # driven as uid 0 and as a non-root control: 6 collected, floor at
+    # band(6) = 6.
+    "tests/test_doctor_verifier_limits.py": 6,
+    # Repairs are withheld for the verifier's resource-limit refusal, which
+    # no project change can alter: 4 collected, floor at band(4) = 4.
+    "tests/test_repair_withheld_for_environment.py": 4,
+    # The architect is told that any .nyx it writes must pass `nornyx check`:
+    # 1 collected, floor at band(1) = 1.
+    "tests/test_architect_nyx_validation_goal.py": 1,
 }
 
 # Raised again, from 1120, when round-3 remediation took the suite to 1255 and
@@ -2608,14 +2621,37 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # modules, the module-floor sum rises by 4 to 6494, the aggregate follows to
 # 6502 keeping the same 8 above it, band(n) 6419 -> 6423, and the room below
 # what collects and the slack the bands grant stay 634 and 642. NO SKIP IS
-# ADDED. The rows below are these.
+# ADDED.
+#
+# 2026-11-10: THE RUN-DIAGNOSTICS FIXES ADD THREE MODULES AND MOVE NONE,
+# measured from fresh collections of the base and of this tree, which differ
+# only by the three new modules: the doctor's verifier-limits row and the
+# verifier's own uid-0 refusal it restates (6, floor band(6) = 6), the
+# withheld repair for the verifier's resource-limit refusal (4, floor
+# band(4) = 4), and the architect's .nyx validation goal (1, floor
+# band(1) = 1). No other module's count changed and no floor fell. 7147
+# collect across 151 modules; the module-floor sum rises by 11 to 6505 and
+# the aggregate follows to 6513, keeping the same 8 above it; band(n)
+# 6423 -> 6433, and the room below what collects and the slack between the
+# suite and the module floors stay 634 and 642, because each new floor is
+# the band of its own count. NO SKIP IS ADDED, no module joins a platform job, so the
+# windows-runtime job's floor is untouched at 766, and no provider row,
+# confinement row or gate profile moved.
+#
+# MEASURED AS AN UNPRIVILEGED USER, as the CI test jobs run. The same tree
+# collected as root gives 7145: tests/test_ps51_lint.py generates its
+# `no-permission` and `unreadable-directory` cases only for a non-root
+# POSIX user, so a root collection is 2 short in that module alone (465
+# against the 467 its floor band(467) = 421 was set from), and the base
+# collects 7134 as root against the 7136 recorded above. The rows below are
+# the unprivileged figures.
 #
 # (rows below):
 #
-#     collected across tests/     7136   (148 modules)
-#     sum of the module floors    6494
-#     band(7136) = ceil(0.9*n)    6423
-#     MINIMUM_COLLECTED           6502
+#     collected across tests/     7147   (151 modules)
+#     sum of the module floors    6505
+#     band(7147) = ceil(0.9*n)    6433
+#     MINIMUM_COLLECTED           6513
 #     above the module sum          8
 #     below what collects         634
 #
@@ -3108,7 +3144,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6502
+MINIMUM_COLLECTED = 6513
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3402,6 +3438,9 @@ REQUIRED_MODULES = (
     "tests/test_subject_metamorphic.py",
     "tests/test_subject_provenance.py",
     "tests/test_validation_script.py",
+    "tests/test_doctor_verifier_limits.py",
+    "tests/test_repair_withheld_for_environment.py",
+    "tests/test_architect_nyx_validation_goal.py",
 )
 
 
