@@ -105,6 +105,25 @@ INVALID_CASES: dict[str, tuple[Any, str]] = {
             REVIEW_VERDICT_SCHEMA, "\\u006e" + REVIEW_VERDICT_SCHEMA[1:]) + "\n"
             + json.dumps(verdict_object(role))),
         "outside the final verdict object"),
+    "PASS inside an unfinished object": (
+        lambda role: envelope('{"verdict": "FAIL", "blocking_findings": ["a defect"], '
+                              '"example": ' + json.dumps(verdict_object(role))),
+        "unfinished object or array"),
+    "PASS inside an unfinished array": (
+        lambda role: envelope("[" + json.dumps(verdict_object(role))),
+        "unfinished object or array"),
+    "PASS inside an unfinished string": (
+        lambda role: envelope('Note: "' + json.dumps(verdict_object(role))),
+        "unfinished string"),
+    "escaped schema after a stray quote": (
+        lambda role: envelope('A stray " before ' + _escaped_duplicate(role) + "\n"
+                              + json.dumps(verdict_object(role))),
+        "outside the final verdict object"),
+    "doubly escaped schema in another object": (
+        lambda role: envelope(json.dumps(verdict_object(role)).replace(
+            REVIEW_VERDICT_SCHEMA, "\\\\u005cu006e" + REVIEW_VERDICT_SCHEMA[1:]) + "\n"
+            + json.dumps(verdict_object(role))),
+        "outside the final verdict object"),
     "escaped schema in a malformed final object": (
         lambda role: envelope(_escaped_duplicate(role)),
         "malformed"),
@@ -159,6 +178,16 @@ INVALID_CASES: dict[str, tuple[Any, str]] = {
         lambda role: json.dumps({"type": "result", "is_error": False,
                                  "result": verdict_object(role)}),
         "result is not text"),
+    "envelope reports another subtype": (
+        lambda role: envelope(json.dumps(verdict_object(role)), subtype="error_max_turns"),
+        "did not succeed"),
+    "envelope of another type": (
+        lambda role: envelope(json.dumps(verdict_object(role)), type="assistant"),
+        "not a result"),
+    "event stream reporting a failed turn": (
+        lambda role: codex_review_output(role)[: codex_review_output(role).rindex("\n")]
+        + "\n" + json.dumps({"type": "turn.failed", "error": {"message": "stopped"}}),
+        "reports an error"),
     "empty output": (
         lambda role: "",
         "empty"),

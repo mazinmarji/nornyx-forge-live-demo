@@ -76,6 +76,14 @@ def test_only_whitespace_and_one_closing_fence_may_follow_the_verdict():
         assert _parse(envelope(text)).verdict == "INVALID", text
 
 
+def test_balanced_text_and_a_json_report_may_precede_the_verdict():
+    body = json.dumps(verdict_object("test-inspector"))
+    report = json.dumps({"checks": ["imports", "boundaries"], "note": "{x} and [y]"})
+    for text in ('Checked {a}, [b] and "c".\n' + body, report + "\n" + body,
+                 'He wrote \\"quoted\\" text.\n' + body):
+        assert _parse(envelope(text)).verdict == "PASS", text
+
+
 def test_a_fail_carries_its_findings_and_does_not_pass():
     parsed = _parse(review_output("test-inspector", "FAIL", ("no test covers BRD-F-002",)))
     assert parsed.verdict == "FAIL" and parsed.passed is False

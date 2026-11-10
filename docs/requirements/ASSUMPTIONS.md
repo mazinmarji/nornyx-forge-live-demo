@@ -8979,6 +8979,19 @@ could never run them.
   conclusion, or sitting beside a second or partial object is `INVALID`.
   The first review of this change found those four shapes accepted; each is
   now a test.
+- **Nothing before the verdict is left open.** The text before the object
+  must close every brace and bracket it opens and hold an even number of
+  unescaped double quotes, so a verdict never sits inside an unfinished
+  object, array or string. The schema check runs on the text with every
+  JSON escape decoded, repeatedly, and pairs no quotes, so a stray quote in
+  prose cannot hide an escaped spelling. Both are counted without reading
+  the surrounding text as JSON: prose that leaves one of them open is
+  refused, which fails closed. The second review found an unfinished
+  wrapper and a stray quote accepted; each is now a test.
+- **Only a completed run is read.** A Claude envelope whose `type` is not
+  `result`, whose `subtype` is not `success`, or whose `is_error` is true
+  yields no reply, and neither does a Codex stream carrying an `error` or
+  `turn.failed` event. Each is `INVALID`.
 - **Two gates per reviewer.** `review-worker:<role>:completed` is the process
   result. `review-worker:<role>:verdict` passes only on a valid `PASS`.
   Either failing rejects the build. No repair is requested for a reviewer's

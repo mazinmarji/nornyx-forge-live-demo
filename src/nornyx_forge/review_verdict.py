@@ -16,7 +16,9 @@ THE CONTRACT. A reviewer ends its reply with exactly one JSON object:
 Exactly those five keys. `PASS` with any blocking finding is invalid.
 
 The object ENDS the reply: only whitespace and one closing Markdown fence may
-follow it. It stands alone, not nested inside another JSON value. And the
+follow it. It stands alone, not nested inside another JSON value, complete or
+unfinished: the text before it must close every brace and bracket it opens
+and hold an even number of unescaped double quotes. And the
 schema identifier, however it is spelled -- a JSON escape such as `\\u006e` is
 the same text -- appears nowhere else in the reply. A verdict quoted as an
 example, nested under a key, followed by another conclusion, or accompanied
@@ -125,6 +127,11 @@ def _loads(text: str) -> Any:
     return _DECODER.decode(text)
 
 
+#: Event types by which a Codex stream reports a run that did not complete.
+#: A stream carrying one yields no reply, whatever message precedes it.
+_FAILED_EVENTS = frozenset({"error", "turn.failed"})
+
+
 def reply_text(output: Any) -> tuple[str | None, str]:
     """The reviewer's reply text inside a recorded worker output.
 
@@ -145,6 +152,13 @@ def reply_text(output: Any) -> tuple[str | None, str]:
             return None, "the recorded output is JSON but not an envelope object"
         if envelope.get("is_error") is True:
             return None, "the worker envelope reports an error"
+        # The Claude CLI marks a run that did not finish normally -- a turn
+        # limit, an execution error -- by its subtype, so anything other than
+        # a successful result is not a reply to read a verdict from.
+        if "type" in envelope and envelope["type"] != "result":
+            return None, "the worker envelope is not a result"
+        if "subtype" in envelope and envelope["subtype"] != "success":
+            return None, "the worker envelope reports a run that did not succeed"
         if "result" not in envelope:
             return None, "the worker envelope carries no result text"
         if not isinstance(envelope["result"], str):
@@ -162,6 +176,8 @@ def reply_text(output: Any) -> tuple[str | None, str]:
         if not isinstance(event, dict):
             return None, "the recorded output is not a decodable worker envelope"
         events.append(event)
+    if any(event.get("type") in _FAILED_EVENTS for event in events):
+        return None, "the worker event stream reports an error"
     reply: str | None = None
     for event in events:
         item = event.get("item")
@@ -182,33 +198,72 @@ def reply_text(output: Any) -> tuple[str | None, str]:
 #: refused by the strict decoder rather than skipped as if it were prose.
 _LOCATOR = json.JSONDecoder()
 
-#: A JSON string literal, for finding the schema identifier however it is
-#: spelled: `\u006e` and `n` decode to the same text.
-_STRING_LITERAL = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+#: A JSON escape that can spell a character of the schema identifier.
+_JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\(/)")
 
-#: The one closing Markdown fence a reply may end with after its verdict.
-_CLOSING_FENCE = "```"
+#: How many rounds of escape decoding are applied; each round can only make
+#: more of the text literal, and the identifier is ASCII, so a few suffice.
+_ESCAPE_ROUNDS = 8
+
+
+def _unescaped(text: str) -> str:
+    """`text` with every JSON escape decoded, wherever it occurs.
+
+    No string literal is parsed, so no pairing of quotes is relied on: a
+    stray quote in prose cannot shift where an escaped spelling is found.
+    Decoding is repeated so a doubly escaped spelling is decoded as well;
+    over-decoding can only find MORE mentions, which fails closed.
+    """
+    for _ in range(_ESCAPE_ROUNDS):
+        decoded = _JSON_ESCAPE.sub(
+            lambda hit: chr(int(hit.group(1), 16)) if hit.group(1) else hit.group(2), text
+        )
+        if decoded == text:
+            break
+        text = decoded
+    return text
 
 
 def _names_the_schema(text: str) -> bool:
-    """Whether `text` contains the schema identifier, spelled any way.
+    """Whether `text` contains the schema identifier, spelled any way."""
+    return REVIEW_VERDICT_SCHEMA in text or REVIEW_VERDICT_SCHEMA in _unescaped(text)
 
-    The literal spelling, or any JSON string literal that DECODES to text
-    containing it, so an escaped spelling in a malformed object is found.
+
+def _open_structure(prefix: str) -> str | None:
+    """Why the text before the verdict leaves a JSON value open, or None.
+
+    The verdict must not sit inside an unfinished object, array or string,
+    so everything before it must close every brace and bracket it opens and
+    hold an even number of unescaped double quotes. Counted without reading
+    the text as JSON, because the text around a verdict need not be JSON:
+    prose that happens to leave one open is refused, which fails closed.
     """
-    if REVIEW_VERDICT_SCHEMA in text:
-        return True
-    for match in _STRING_LITERAL.finditer(text):
-        literal = match.group(0)
-        if "\\" not in literal:
+    depth = {"{": 0, "[": 0}
+    closes = {"}": "{", "]": "["}
+    quotes = 0
+    backslashes = 0
+    for character in prefix:
+        if character == "\\":
+            backslashes += 1
             continue
-        try:
-            decoded = json.loads(literal)
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(decoded, str) and REVIEW_VERDICT_SCHEMA in decoded:
-            return True
-    return False
+        escaped = backslashes % 2 == 1
+        backslashes = 0
+        if character == '"' and not escaped:
+            quotes += 1
+        elif character in depth:
+            depth[character] += 1
+        elif character in closes:
+            opener = closes[character]
+            depth[opener] = max(0, depth[opener] - 1)
+    if depth["{"] or depth["["]:
+        return "the verdict sits inside an unfinished object or array"
+    if quotes % 2:
+        return "the verdict sits inside an unfinished string"
+    return None
+
+
+#: The one closing Markdown fence a reply may end with after its verdict.
+_CLOSING_FENCE = "```"
 
 
 def _final_object(text: str) -> tuple[int, int] | None:
@@ -301,6 +356,9 @@ def parse_review(output: Any, *, expected_role: str, worker_success: bool) -> Pa
             "the schema identifier appears outside the final verdict object, so "
             "the reply holds another or a partial verdict",
         )
+    enclosing = _open_structure(text[:start])
+    if enclosing is not None:
+        return _invalid(expected_role, enclosing)
     try:
         value = _loads(text[start:end])
     except (ValueError, RecursionError):
@@ -331,7 +389,8 @@ def verdict_requirement(role: str) -> str:
         "End your reply with exactly one JSON object, separate from anything else "
         "you return, with exactly these five keys: " + template + ". "
         "Nothing may follow that object except one closing code fence, and it may "
-        "not be nested inside another value. "
+        "not be nested inside another value: everything before it must close "
+        "every brace, bracket and double quote it opens. "
         "Set verdict to exactly one of PASS, FAIL or NOT_VERIFIED. "
         "blocking_findings lists each blocking finding as non-empty text; PASS "
         "requires an empty list. evidence_relied_on lists what you relied on. "
