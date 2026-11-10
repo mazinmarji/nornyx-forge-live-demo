@@ -63,6 +63,7 @@ from typing import Any, Callable
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from review_verdict_support import review_output
 from source_binding import bind_via_routes
 
 from nornyx_forge import experience_journey as journey
@@ -127,6 +128,18 @@ SIMULATED_ELIGIBILITY = (
 ROLES = ("solution-architect", "application-builder",
          "test-inspector", "architecture-inspector", "security-inspector")
 REVIEW_ROLES = ROLES[2:]
+#: What the simulated provider returns for each review worker: the same
+#: sentence naming the simulation, ending with the valid PASS verdict a
+#: review gate now requires (`nornyx_forge.review_verdict`).
+SIMULATED_REVIEW_OUTPUTS = {
+    role: review_output(role, prefix=SIMULATED_OUTPUT + "\n") for role in REVIEW_ROLES}
+
+
+def simulated_output(role: str) -> str:
+    """The simulated provider's output for one worker role."""
+    return SIMULATED_REVIEW_OUTPUTS.get(role, SIMULATED_OUTPUT)
+
+
 #: Generous: the trusted verifier runs twice on a passing build and bounds
 #: each run at 120 seconds; a build this slow has failed.
 BUILD_DEADLINE_SECONDS = 600
@@ -138,7 +151,8 @@ GENERATED_CONTRACT = Path(".nornyx") / "generated" / "brd_contract.nyx"
 PASSING_GATES = [
     *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
     (GOVERNANCE_GATE, True),
-    *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
+    *((f"review-worker:{role}:{fact}", True)
+      for role in REVIEW_ROLES for fact in ("completed", "verdict")),
     ("build-evidence-ledger-valid-before-verdict", True)]
 
 
@@ -232,7 +246,7 @@ class SimulatedProvider:
                     stream.write("# edited by the simulated provider after generation\n")
             elif self.contract == "delete":
                 generated.unlink()
-        return WorkerResult(role=role, goal=goal, success=True, output=SIMULATED_OUTPUT,
+        return WorkerResult(role=role, goal=goal, success=True, output=simulated_output(role),
                             command=(SIMULATED_COMMAND, role))
 
 
@@ -567,12 +581,14 @@ def test_the_simulated_journey_reaches_ready_through_the_shipped_surfaces(
         assert (project / relative).read_bytes() == text.encode("utf-8"), relative
     workers = [result["architecture_worker"], result["builder_worker"], *result["review_workers"]]
     assert [(w["role"], w["command"], w["output"], w["success"]) for w in workers] == [
-        (role, [SIMULATED_COMMAND, role], SIMULATED_OUTPUT, True) for role in ROLES]
+        (role, [SIMULATED_COMMAND, role], simulated_output(role), True) for role in ROLES]
     assert result["engineering_provider"] == {"selected": PROVIDER}
     assert result["assurance"] == {
         "mode": "autonomous_demonstration", "human_review": "not_performed",
         "production_approval": "not_granted", "review_workers_executed": len(REVIEW_ROLES),
-        "independent_ai_review": "not_established"}
+        "independent_ai_review": "not_established",
+        "internal_ai_review_verdicts": {
+            "PASS": len(REVIEW_ROLES), "FAIL": 0, "NOT_VERIFIED": 0, "INVALID": 0}}
 
     # Deterministic validation: the trusted verifier's profile decided, over
     # the files the simulated provider generated.

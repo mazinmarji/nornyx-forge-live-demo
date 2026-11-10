@@ -28,6 +28,7 @@ from .providers import ProviderRoutedWorker, get_provider
 from .repo_qualifier import qualify_local, qualify_remote
 from .repo_scout import scout
 from .requirements import parse_brd, profile_from_brd, write_requirements_artifacts
+from .review_verdict import parse_review, verdict_counts, verdict_requirement
 from .util import digest, write_json
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -160,6 +161,74 @@ def failing_gate_details(gates: list[GateResult]) -> str:
     is escaped, and the total is not bounded -- a record, not an argument,
     so it is neither sanitised nor held to the composed goal's ceiling."""
     return "\n\n".join(f"{name}: {tail}" for name, tail in _failing_gate_quotes(gates))
+
+
+#: The trusted verifier's test-execution gate in the greenfield profile.
+_TEST_EXECUTION_GATE = "greenfield:test-execution"
+
+
+def verifier_test_summary(gates: list[GateResult], provenance: Any) -> str:
+    """A short, bounded account of the trusted verifier's recorded test run.
+
+    Read only from what Forge's trusted code produced in this run: the
+    test-execution gate's outcome and the counts in the acceptance
+    provenance. Each count is shown only when it is an integer, so nothing a
+    provider wrote can reach a reviewer's goal through this sentence.
+    """
+    gate = next((g for g in gates if g.name == _TEST_EXECUTION_GATE), None)
+    completion: Any = None
+    if isinstance(provenance, dict):
+        execution = provenance.get("test_execution")
+        if isinstance(execution, dict):
+            completion = execution.get("completion")
+    if gate is None and not isinstance(completion, dict):
+        return (
+            "Trusted verifier record from this run: no test-execution record was "
+            "produced, so no test results are available to you."
+        )
+
+    def count(key: str) -> str:
+        value = completion.get(key) if isinstance(completion, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return "unavailable"
+
+    if gate is None:
+        outcome = "not recorded"
+    else:
+        outcome = "passed" if gate.passed else "failed"
+    return (
+        "Trusted verifier record from this run, produced by Forge's trusted code "
+        f"and not by you: the test-execution gate {outcome}; collected "
+        f"{count('collected')}, executed {count('executed')}, failed "
+        f"{count('failed')}, skipped {count('skipped')}."
+    )
+
+
+def review_goals(test_summary: str) -> tuple[tuple[str, str], ...]:
+    """Each reviewer's role and goal, each ending with the verdict it owes."""
+    specs = (
+        (
+            "test-inspector",
+            "Judge BRD acceptance coverage, regression behaviour and failure "
+            "handling by reading the code and tests against the trusted "
+            "verifier's recorded test execution, given here as read-only input. "
+            + test_summary
+            + " Your tools are read-only and cannot run tests: do not run or "
+            "claim to have run any test. Do not edit files.",
+        ),
+        (
+            "architecture-inspector",
+            "Compare implementation dependencies and side-effect boundaries with "
+            "docs/ARCHITECTURE.md and the Nornyx contracts. Do not edit files.",
+        ),
+        (
+            "security-inspector",
+            "Review secret handling, subprocess use, untrusted input, permissions, "
+            "and autonomous-demo limitations. Do not edit files.",
+        ),
+    )
+    return tuple((role, goal + " " + verdict_requirement(role)) for role, goal in specs)
 
 
 def unrepairable_environment_refusal(gates: list[GateResult]) -> str | None:
@@ -582,22 +651,10 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         passed = all(gate.passed for gate in gates)
         reviews: list[dict[str, Any]] = list(in_session_reviews)
         review_gates: list[GateResult] = []
+        parsed_verdicts = []
         if passed and self.worker_mode == "claude-code":
-            review_specs = (
-                (
-                    "test-inspector",
-                    "Independently verify BRD acceptance coverage, regression behavior, and failure handling. Do not edit files.",
-                ),
-                (
-                    "architecture-inspector",
-                    "Compare implementation dependencies and side-effect boundaries with docs/ARCHITECTURE.md and the Nornyx contracts. Do not edit files.",
-                ),
-                (
-                    "security-inspector",
-                    "Review secret handling, subprocess use, untrusted input, permissions, and autonomous-demo limitations. Do not edit files.",
-                ),
-            )
-            for role, goal in review_specs:
+            test_summary = verifier_test_summary(gates, self.data.get("acceptance_provenance"))
+            for role, goal in review_goals(test_summary):
                 review = self.worker.run(
                     role=role,
                     goal=goal,
@@ -606,12 +663,31 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     max_turns=22,
                     timeout_seconds=600,
                 )
-                reviews.append(review.__dict__)
+                # Two gates, two facts. `completed` is the process result and
+                # nothing more; `verdict` passes only on a valid PASS from the
+                # verdict the reviewer was told to end with. A finished process
+                # that concluded NOT_VERIFIED, or reported a defect, used to be
+                # a passing gate: that is the substitution these two separate.
+                # No repair is requested for a reviewer's verdict.
+                parsed = parse_review(
+                    review.output, expected_role=role, worker_success=review.success
+                )
+                parsed_verdicts.append(parsed)
+                reviews.append({**review.__dict__, "parsed_verdict": parsed.as_dict()})
                 review_gates.append(
                     GateResult(
-                        f"review-worker:{role}",
+                        f"review-worker:{role}:completed",
                         review.success,
                         review.output,
+                        review.command,
+                        review.returncode,
+                    )
+                )
+                review_gates.append(
+                    GateResult(
+                        f"review-worker:{role}:verdict",
+                        parsed.passed,
+                        json.dumps(parsed.as_dict(), sort_keys=True),
                         review.command,
                         review.returncode,
                     )
@@ -657,6 +733,10 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             # independent of the builder that launched it.
             "review_workers_executed": len(reviews),
             "independent_ai_review": "not_established",
+            # The verdicts the build's OWN review workers gave, as the parser
+            # read them. Internal: it is not independent review, which stays
+            # `not_established` above, and not human review or approval.
+            "internal_ai_review_verdicts": verdict_counts(parsed_verdicts),
         }
         self.ledger.append(
             "build_acceptance",

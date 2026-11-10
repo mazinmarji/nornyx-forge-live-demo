@@ -39,7 +39,7 @@ from session_client import authed_client
 from test_build_trigger import _client as _trigger_client
 from test_build_trigger import _project as _confirmed_project
 from test_build_trigger import _wait_finished
-from test_simulated_journey import PROVIDER, SIMULATED_COMMAND, SIMULATED_OUTPUT, _walk
+from test_simulated_journey import PROVIDER, SIMULATED_COMMAND, _walk, simulated_output
 
 from nornyx_forge import capsule_store as store_module
 from nornyx_forge import experience, gates, greenfield_verifier, onboarding_app
@@ -131,7 +131,7 @@ class ReferenceProvider:
                 target = Path(workspace) / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8", newline="")
-        return WorkerResult(role=role, goal=goal, success=True, output=SIMULATED_OUTPUT,
+        return WorkerResult(role=role, goal=goal, success=True, output=simulated_output(role),
                             command=(SIMULATED_COMMAND, role))
 
 
