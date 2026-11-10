@@ -562,6 +562,14 @@ def _verifier_environment(loader_path: Path | None = None) -> dict[str, str]:
     return result
 
 
+#: The verifier-identity gate's name and its resource-limit finding. The
+#: verifier applies its OS limits before it reads the project, so this finding
+#: is decided by the account Forge runs under and never by the subject:
+#: `development_flow` withholds repairs on it for that reason.
+GREENFIELD_IDENTITY_GATE = "greenfield:trusted-verifier-identity"
+GREENFIELD_RESOURCE_LIMITS_MISMATCH = "OS resource limits do not match the parent-owned policy"
+
+
 def _closed_failure(
     detail: str,
     *,
@@ -578,7 +586,7 @@ def _closed_failure(
     return (
         [
             GateResult(
-                "greenfield:trusted-verifier-identity",
+                GREENFIELD_IDENTITY_GATE,
                 False,
                 detail,
                 command,
@@ -780,7 +788,7 @@ def trusted_greenfield_gates(
         if not isinstance(file_count, int) or isinstance(file_count, bool) or file_count < 1:
             identity_problems.append("subject file count is absent or invalid")
     if resource_limits != GREENFIELD_RESOURCE_LIMITS:
-        identity_problems.append("OS resource limits do not match the parent-owned policy")
+        identity_problems.append(GREENFIELD_RESOURCE_LIMITS_MISMATCH)
     if not isinstance(test_execution, dict):
         identity_problems.append("test-execution provenance is absent")
     if not isinstance(raw_gates, list):

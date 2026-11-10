@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -70,7 +71,44 @@ def doctor() -> None:
     }
     for command in commands:
         table.add_row(command, "yes" if shutil.which(command) else "no", purposes[command])
+    enforceable, detail = greenfield_limits_enforceable()
+    table.add_row("verifier limits", "yes" if enforceable else "no", detail)
     console.print(table)
+
+
+def greenfield_limits_enforceable(
+    os_name: str | None = None, euid: int | None = None
+) -> tuple[bool, str]:
+    """Whether this user can pass the greenfield verifier's resource-limit check.
+
+    The trusted greenfield verifier fails closed when it cannot cap the
+    processes the generated tests start. On POSIX it refuses outright for
+    uid 0, because RLIMIT_NPROC does not bind root, so a greenfield build run
+    as root can never be accepted. Doctor said nothing about this, and the
+    refusal surfaced only after every provider stage had run. This reports
+    the one condition the verifier refuses before it measures anything; it
+    applies no limit and does not stand in for the verifier's own check.
+    """
+    os_name = os.name if os_name is None else os_name
+    if euid is None and hasattr(os, "geteuid"):
+        euid = os.geteuid()
+    if os_name == "nt":
+        # Doctor builds no job object, so it reports only that this check
+        # refused nothing; whether the limits hold is the verifier's finding.
+        return True, (
+            "greenfield test limits: not refused by this check; the verifier "
+            "applies and verifies them itself"
+        )
+    if euid == 0:
+        return False, (
+            "greenfield test limits: running as root (uid 0); the verifier refuses "
+            "because RLIMIT_NPROC is not enforceable for root, so no greenfield build "
+            "can be accepted. Run Forge as a non-root user"
+        )
+    return True, (
+        "greenfield test limits: not refused for this user by this check; the "
+        "verifier applies and verifies them itself"
+    )
 
 
 @app.command()
