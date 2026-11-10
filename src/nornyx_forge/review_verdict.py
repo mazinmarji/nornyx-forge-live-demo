@@ -15,6 +15,13 @@ THE CONTRACT. A reviewer ends its reply with exactly one JSON object:
 
 Exactly those five keys. `PASS` with any blocking finding is invalid.
 
+The object ENDS the reply: only whitespace and one closing Markdown fence may
+follow it. It stands alone, not nested inside another JSON value. And the
+schema identifier, however it is spelled -- a JSON escape such as `\\u006e` is
+the same text -- appears nowhere else in the reply. A verdict quoted as an
+example, nested under a key, followed by another conclusion, or accompanied
+by a second or partial object therefore never reads as the reviewer's own.
+
 THE PARSER FAILS CLOSED. `parse_review` reads a worker's recorded output
 exactly as `WorkerResult.output` holds it, and returns `PASS`, `FAIL`,
 `NOT_VERIFIED` or `INVALID`, each with a reason. Everything that is not one
@@ -41,6 +48,7 @@ and nothing in this module records or implies either.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -169,25 +177,60 @@ def reply_text(output: Any) -> tuple[str | None, str]:
     return reply, "worker JSON event stream"
 
 
-def _verdict_objects(text: str) -> tuple[list[tuple[int, int, Any]], int]:
-    """Every decodable JSON value starting at a `{` that names the schema.
+#: The lenient decoder used only to find WHERE a JSON object ends. A repeated
+#: key does not stop it, so a malformed candidate is still located and then
+#: refused by the strict decoder rather than skipped as if it were prose.
+_LOCATOR = json.JSONDecoder()
 
-    Returns the `(start, end, value)` of each object whose `schema` equals
-    the constant, and how many times the schema identifier occurs in the
-    text. Comparing the two finds a malformed or partial object: an
-    occurrence no decoded object covers.
+#: A JSON string literal, for finding the schema identifier however it is
+#: spelled: `\u006e` and `n` decode to the same text.
+_STRING_LITERAL = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+
+#: The one closing Markdown fence a reply may end with after its verdict.
+_CLOSING_FENCE = "```"
+
+
+def _names_the_schema(text: str) -> bool:
+    """Whether `text` contains the schema identifier, spelled any way.
+
+    The literal spelling, or any JSON string literal that DECODES to text
+    containing it, so an escaped spelling in a malformed object is found.
     """
-    found: list[tuple[int, int, Any]] = []
-    index = text.find("{")
-    while index != -1:
+    if REVIEW_VERDICT_SCHEMA in text:
+        return True
+    for match in _STRING_LITERAL.finditer(text):
+        literal = match.group(0)
+        if "\\" not in literal:
+            continue
         try:
-            value, end = _DECODER.raw_decode(text, index)
+            decoded = json.loads(literal)
         except (ValueError, RecursionError):
-            value, end = None, index
-        if isinstance(value, dict) and value.get("schema") == REVIEW_VERDICT_SCHEMA:
-            found.append((index, end, value))
+            continue
+        if isinstance(decoded, str) and REVIEW_VERDICT_SCHEMA in decoded:
+            return True
+    return False
+
+
+def _final_object(text: str) -> tuple[int, int] | None:
+    """The span of the standalone JSON object the reply ENDS with, or None.
+
+    Only whitespace and one closing Markdown fence may follow it. The span is
+    the outermost object ending there, so a verdict nested inside another
+    value is never the candidate: the value that holds it is.
+    """
+    end = len(text.rstrip())
+    if text[:end].endswith(_CLOSING_FENCE):
+        end = len(text[: end - len(_CLOSING_FENCE)].rstrip())
+    index = text.find("{")
+    while index != -1 and index < end:
+        try:
+            value, stop = _LOCATOR.raw_decode(text, index)
+        except (ValueError, RecursionError):
+            value, stop = None, -1
+        if stop == end and isinstance(value, dict):
+            return index, stop
         index = text.find("{", index + 1)
-    return found, text.count(REVIEW_VERDICT_SCHEMA)
+    return None
 
 
 def validate_verdict_object(value: Any, expected_role: str) -> ParsedVerdict:
@@ -243,23 +286,25 @@ def parse_review(output: Any, *, expected_role: str, worker_success: bool) -> Pa
         return _invalid(expected_role, how)
     if len(text) > MAX_RESULT_TEXT:
         return _invalid(expected_role, f"the reply text exceeds {MAX_RESULT_TEXT} characters")
-    objects, mentions = _verdict_objects(text)
-    if not objects:
-        if mentions:
-            return _invalid(expected_role, "the verdict object is malformed JSON")
+    span = _final_object(text)
+    if span is None:
+        if _names_the_schema(text):
+            return _invalid(
+                expected_role,
+                "the reply does not end with a decodable, standalone verdict object",
+            )
         return _invalid(expected_role, "the reply contains no verdict object")
-    if len(objects) > 1:
-        return _invalid(
-            expected_role, f"the reply contains {len(objects)} verdict objects, not one"
-        )
-    start, end, value = objects[0]
-    covered = text[start:end].count(REVIEW_VERDICT_SCHEMA)
-    if mentions > covered:
+    start, end = span
+    if _names_the_schema(text[:start]):
         return _invalid(
             expected_role,
-            "the schema identifier also appears outside the one decodable verdict "
-            "object, so a malformed or partial verdict cannot be ruled out",
+            "the schema identifier appears outside the final verdict object, so "
+            "the reply holds another or a partial verdict",
         )
+    try:
+        value = _loads(text[start:end])
+    except (ValueError, RecursionError):
+        return _invalid(expected_role, "the verdict object is malformed JSON")
     return validate_verdict_object(value, expected_role)
 
 
@@ -285,6 +330,8 @@ def verdict_requirement(role: str) -> str:
     return (
         "End your reply with exactly one JSON object, separate from anything else "
         "you return, with exactly these five keys: " + template + ". "
+        "Nothing may follow that object except one closing code fence, and it may "
+        "not be nested inside another value. "
         "Set verdict to exactly one of PASS, FAIL or NOT_VERIFIED. "
         "blocking_findings lists each blocking finding as non-empty text; PASS "
         "requires an empty list. evidence_relied_on lists what you relied on. "

@@ -47,6 +47,14 @@ def _without(role: str, key: str) -> dict[str, Any]:
     return value
 
 
+def _escaped_duplicate(role: str) -> str:
+    """A verdict object whose schema is spelled with a JSON escape and whose
+    `verdict` key is repeated: FAIL, then PASS, which `json` would keep."""
+    return ('{"schema": "\\u006e' + REVIEW_VERDICT_SCHEMA[1:] + '", "role": "' + role
+            + '", "verdict": "FAIL", "verdict": "PASS", "blocking_findings": [], '
+            '"evidence_relied_on": []}')
+
+
 def _codex_stream(*events: dict[str, Any]) -> str:
     return "\n".join(json.dumps(event) for event in events)
 
@@ -61,19 +69,45 @@ INVALID_CASES: dict[str, tuple[Any, str]] = {
     "two identical verdict objects": (
         lambda role: envelope(json.dumps(verdict_object(role)) + "\n"
                               + json.dumps(verdict_object(role))),
-        "2 verdict objects"),
+        "outside the final verdict object"),
     "two conflicting verdict objects": (
         lambda role: envelope(json.dumps(verdict_object(role, "FAIL", ("a defect",))) + "\n"
                               + json.dumps(verdict_object(role))),
-        "2 verdict objects"),
+        "outside the final verdict object"),
     "malformed verdict JSON": (
         lambda role: envelope('{"schema": "' + REVIEW_VERDICT_SCHEMA + '", "role": "'
                               + role + '", "verdict": "PASS", "blocking_findings": ['),
-        "malformed"),
+        "does not end with a decodable, standalone verdict object"),
     "schema named outside the object": (
         lambda role: envelope("I return a " + REVIEW_VERDICT_SCHEMA + " object below.\n"
                               + json.dumps(verdict_object(role))),
-        "outside the one decodable verdict object"),
+        "outside the final verdict object"),
+    "PASS nested inside another object": (
+        lambda role: envelope('{"verdict": "FAIL", "blocking_findings": ["a defect"], '
+                              '"example": ' + json.dumps(verdict_object(role)) + "}"),
+        "unknown keys"),
+    "text after the verdict": (
+        lambda role: envelope(json.dumps(verdict_object(role))
+                              + "\nFinal conclusion: NOT_VERIFIED"),
+        "does not end with a decodable, standalone verdict object"),
+    "text after the closing fence": (
+        lambda role: envelope("```json\n" + json.dumps(verdict_object(role))
+                              + "\n```\nOn reflection, FAIL."),
+        "does not end with a decodable, standalone verdict object"),
+    "escaped schema in a malformed object after the verdict": (
+        lambda role: envelope(json.dumps(verdict_object(role)) + "\n" + _escaped_duplicate(role)),
+        "outside the final verdict object"),
+    "escaped schema in a malformed object before the verdict": (
+        lambda role: envelope(_escaped_duplicate(role) + "\n" + json.dumps(verdict_object(role))),
+        "outside the final verdict object"),
+    "escaped schema in another valid object before the verdict": (
+        lambda role: envelope(json.dumps(verdict_object(role)).replace(
+            REVIEW_VERDICT_SCHEMA, "\\u006e" + REVIEW_VERDICT_SCHEMA[1:]) + "\n"
+            + json.dumps(verdict_object(role))),
+        "outside the final verdict object"),
+    "escaped schema in a malformed final object": (
+        lambda role: envelope(_escaped_duplicate(role)),
+        "malformed"),
     "unknown key": (
         lambda role: envelope(json.dumps(_with(role, notes="extra"))),
         "unknown keys"),

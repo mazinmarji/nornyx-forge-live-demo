@@ -68,6 +68,14 @@ def test_a_pass_inside_surrounding_review_text_is_read():
     assert _parse(envelope(text)).verdict == "PASS"
 
 
+def test_only_whitespace_and_one_closing_fence_may_follow_the_verdict():
+    body = json.dumps(verdict_object("test-inspector"))
+    for text in (body + "\n\n  ", "```json\n" + body + "\n```", "```\n" + body + "\n```\n\n"):
+        assert _parse(envelope(text)).verdict == "PASS", text
+    for text in (body + "\n```\n```", body + " ok", body + "\n```json"):
+        assert _parse(envelope(text)).verdict == "INVALID", text
+
+
 def test_a_fail_carries_its_findings_and_does_not_pass():
     parsed = _parse(review_output("test-inspector", "FAIL", ("no test covers BRD-F-002",)))
     assert parsed.verdict == "FAIL" and parsed.passed is False

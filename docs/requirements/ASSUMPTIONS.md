@@ -8971,6 +8971,14 @@ could never run them.
   stream, whose last completed agent message holds it. Anything other than
   one well-formed object for the expected role, from a worker that
   succeeded, is `INVALID`.
+- **The verdict ends the reply and stands alone.** Only whitespace and one
+  closing Markdown fence may follow the object, and it may not be nested
+  inside another JSON value. The schema identifier, however it is spelled,
+  including with a JSON escape, may appear nowhere else in the reply. So a
+  `PASS` quoted as an example, nested under a key, followed by another
+  conclusion, or sitting beside a second or partial object is `INVALID`.
+  The first review of this change found those four shapes accepted; each is
+  now a test.
 - **Two gates per reviewer.** `review-worker:<role>:completed` is the process
   result. `review-worker:<role>:verdict` passes only on a valid `PASS`.
   Either failing rejects the build. No repair is requested for a reviewer's
