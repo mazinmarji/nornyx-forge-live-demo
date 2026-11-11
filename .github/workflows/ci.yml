@@ -143,7 +143,7 @@ jobs:
           from pathlib import Path
           from nornyx_forge.contract_generator import generate_brd_contract
           from nornyx_forge.requirements import parse_brd
-          generate_brd_contract(Path.cwd(), parse_brd(Path("BRD.md")))
+          generate_brd_contract(Path.cwd(), parse_brd(Path("BRD.md")), template="certified")
           PY
           nornyx check .nornyx/generated/brd_contract.nyx
 
