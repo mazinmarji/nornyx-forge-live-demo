@@ -25,7 +25,7 @@ Accept requests.
     )
     model = parse_brd(brd)
 
-    path = generate_brd_contract(tmp_path, model)
+    path = generate_brd_contract(tmp_path, model, template="certified")
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     assert payload["project"]["profile"] == "agentic_repo_harness"

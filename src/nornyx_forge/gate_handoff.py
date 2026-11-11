@@ -397,7 +397,10 @@ def _render_inputs(brd: bytes, instructions: str) -> tuple[dict[str, bytes], dic
         model = parse_brd(root / "BRD.md")
     files = {
         STAGE_BRD: brd,
-        STAGE_CONTRACT: render_brd_contract(model).encode("utf-8"),
+        # Greenfield: a gated build produces an application from nothing, is
+        # verified by the greenfield profile and issued a produced-application
+        # manifest, so its stage carries the greenfield contract (A-063).
+        STAGE_CONTRACT: render_brd_contract(model, template="greenfield").encode("utf-8"),
         STAGE_RUNTIME_CONTRACT: render_runtime_contract(model).encode("utf-8"),
         STAGE_REQUIREMENTS: render_requirements_json(model).encode("utf-8"),
         STAGE_TRACEABILITY: render_traceability(model).encode("utf-8"),

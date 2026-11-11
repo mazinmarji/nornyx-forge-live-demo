@@ -26,6 +26,7 @@ import nornyx_forge.greenfield_verifier as verifier_module
 from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.gates import default_gates, trusted_greenfield_gates
 from nornyx_forge.models import WorkerResult
+from nornyx_forge.produced_app_manifest import APPLICATION_PACKAGE
 
 
 def _write(path: Path, text: str) -> None:
@@ -47,6 +48,24 @@ def _valid_project(root: Path) -> Path:
         "def test_addition_contract():\n"
         "    assert 1 + 1 == 2\n",
     )
+    return root
+
+
+#: Where a flow-level specimen keeps its code: inside the produced-application
+#: package, the source scope the greenfield contract declares (A-063).
+APP_SOURCE = f"{APPLICATION_PACKAGE}/calc.py"
+
+
+def _valid_greenfield_project(root: Path) -> Path:
+    """`_valid_project` in the produced-application layout: the code in
+    `app/`, the tests in `tests/`. The verifier accepts either layout; a whole
+    greenfield build also requires the contract it generated to describe the
+    workspace, so a real-flow specimen keeps its code where that contract
+    says (the contract-truth gate)."""
+    _valid_project(root)
+    (root / "src/app.py").unlink()
+    (root / "src").rmdir()
+    _write(root / APP_SOURCE, "def add(left: int, right: int) -> int:\n    return left + right\n")
     return root
 
 
@@ -101,7 +120,7 @@ def _claude_flow(root: Path, worker: _LocalWorker) -> dict:
 def test_real_flow_accepts_a_fresh_project_without_forge_repository_scripts(
     tmp_path: Path,
 ) -> None:
-    result = _run(_valid_project(tmp_path))
+    result = _run(_valid_greenfield_project(tmp_path))
 
     assert result["accepted"] is True
     assert result["acceptance_provenance"]["gate_profile"]["id"] == (
@@ -118,7 +137,7 @@ def test_real_flow_accepts_a_fresh_project_without_forge_repository_scripts(
 
 
 def test_standing_real_development_flow_uses_the_trusted_profile(tmp_path: Path) -> None:
-    result = _run(_valid_project(tmp_path))
+    result = _run(_valid_greenfield_project(tmp_path))
 
     assert result["accepted"] is True
     assert result["value"]["acceptance_profile"] == "nornyx.greenfield.python.v1"
@@ -170,11 +189,11 @@ def test_real_flow_verifier_failure_dominates_provider_claims(
 def test_real_flow_allows_genuine_subject_repair_with_the_same_verifier(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _valid_project(tmp_path)
-    _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return 0\n")
+    _valid_greenfield_project(tmp_path)
+    _write(tmp_path / APP_SOURCE, "def add(left: int, right: int) -> int:\n    return 0\n")
     _write(
         tmp_path / "tests/test_app.py",
-        "# BRD-F-001\nfrom src.app import add\n\n"
+        "# BRD-F-001\nfrom app.calc import add\n\n"
         "def test_addition_contract():\n    assert add(1, 1) == 2\n",
     )
     failed_gates, failed_provenance = trusted_greenfield_gates(tmp_path)
@@ -184,7 +203,7 @@ def test_real_flow_allows_genuine_subject_repair_with_the_same_verifier(
     def repair_subject(_role: str, goal: str, workspace: Path) -> None:
         if goal.startswith("Repair only"):
             _write(
-                workspace / "src/app.py",
+                workspace / APP_SOURCE,
                 "def add(left: int, right: int) -> int:\n    return left + right\n",
             )
 
@@ -206,11 +225,11 @@ def test_real_flow_allows_genuine_subject_repair_with_the_same_verifier(
 def test_real_flow_reverifies_after_read_only_reviewers(
     tmp_path: Path,
 ) -> None:
-    _valid_project(tmp_path)
+    _valid_greenfield_project(tmp_path)
 
     def mutate_despite_policy(role: str, _goal: str, workspace: Path) -> None:
         if role == "security-inspector":
-            _write(workspace / "src/app.py", "def broken(:\n    pass\n")
+            _write(workspace / APP_SOURCE, "def broken(:\n    pass\n")
 
     worker = _LocalWorker(mutate_despite_policy)
     result = _claude_flow(tmp_path, worker)
