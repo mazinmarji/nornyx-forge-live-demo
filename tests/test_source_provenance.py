@@ -212,7 +212,7 @@ def test_a_brd_that_declares_no_specification_keeps_the_contract_it_always_had()
     text = "# BRD — Demo\n\n## BRD-001 Purpose\n\nShip it.\n"
     model = parse_brd_text(text, "BRD.md")
     assert model.specification_digest is None
-    contract = yaml.safe_load(render_brd_contract(model))
+    contract = yaml.safe_load(render_brd_contract(model, template="certified"))
     assert contract["intents"][0]["goal"] == (
         "Convert the exact BRD revision into a tested, architecture-conformant, "
         "evidence-backed application.")

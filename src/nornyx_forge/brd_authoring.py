@@ -195,7 +195,10 @@ def contract_from_capsule(document: Mapping[str, Any]) -> str:
     can edit -- has no say in the result. Refuses exactly as
     `brd_from_capsule` refuses (A-059).
     """
-    return render_brd_contract(parse_brd_text(brd_from_capsule(document), "BRD.md"))
+    # Greenfield: a capsule's project is built by the onboarding surface in
+    # greenfield mode, and this is the contract that build writes (A-063).
+    return render_brd_contract(parse_brd_text(brd_from_capsule(document), "BRD.md"),
+                               template="greenfield")
 
 
 def confirmed_requirement_texts(document: Mapping[str, Any]) -> tuple[str, ...]:

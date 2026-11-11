@@ -76,6 +76,19 @@ PAM_REF = re.compile(r"\Apam/([0-9a-f]{64})\Z")
 #: Nothing here runs it; it is checked only for being present and parsing.
 ENTRY_POINT = "app/__main__.py"
 
+#: The produced application's package: the directory `ENTRY_POINT` lives in.
+#: A greenfield build's generated contract declares it as the source scope.
+APPLICATION_PACKAGE = ENTRY_POINT.split("/", 1)[0]
+
+#: Where a produced application's tests live. `static_findings` permits
+#: `pytest` there and nowhere else, and the generated contract declares it.
+TESTS_DIRECTORY = "tests"
+
+#: What counts as application SOURCE among the application files: Python, the
+#: one language version 1 permits (`DEPENDENCIES`). Other files -- templates,
+#: stylesheets, data -- are assets, not source.
+APPLICATION_SOURCE_SUFFIX = ".py"
+
 #: Version 1 permits the Python standard library and nothing else.
 DEPENDENCIES: Mapping[str, Any] = {"policy": "python_standard_library_only", "declared": []}
 
@@ -161,6 +174,31 @@ def application_files(files: Collection[str], store_directory: str) -> list[str]
     the capsule store's directory, which is Forge's authority and not product."""
     prefix = store_directory + "/"
     return sorted(path for path in files if not path.startswith(prefix))
+
+
+def application_source_files(files: Collection[str], store_directory: str | None) -> list[str]:
+    """The application's SOURCE files: the Python files among the application.
+
+    THE ONE DEFINITION, used wherever a check needs to know where a produced
+    application's code is. It adds one rule to two that already exist:
+
+    * `files` is the subject as the trusted verifier collects it -- the copy
+      of its rule in `produced_app_handoff.read_subject`, held equal to the
+      verifier's own by a test -- so `.nornyx/`, `.git/` and other version
+      control, virtual environments (`.venv/`, `venv/`), caches
+      (`__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`,
+      `.tox/`) and build output (`build/`, `dist/`, `node_modules/`) never
+      reach it;
+    * `application_files` then removes the capsule store's directory, Forge's
+      authority and not product, when `store_directory` names one;
+    * and of what remains, a file is source when it ends in
+      `APPLICATION_SOURCE_SUFFIX`, the files `static_findings` parses as code.
+
+    `store_directory=None` removes no store, so a Python file wherever it lies
+    is source: the stricter reading, for a caller that knows no store.
+    """
+    kept = application_files(files, store_directory) if store_directory else sorted(files)
+    return [path for path in kept if path.endswith(APPLICATION_SOURCE_SUFFIX)]
 
 
 def render_pam(
@@ -578,7 +616,7 @@ def static_findings(
         if tree is None:
             findings.append(problem or f"{path} does not parse")
             continue
-        in_tests = path.split("/")[0] == "tests"
+        in_tests = path.split("/")[0] == TESTS_DIRECTORY
         permitted = allowed | _TEST_ONLY_IMPORTS if in_tests else allowed
         findings.extend(_primitive_references(path, tree))
         for node in ast.walk(tree):
@@ -601,6 +639,8 @@ def static_findings(
 
 
 __all__ = [
+    "APPLICATION_PACKAGE",
+    "APPLICATION_SOURCE_SUFFIX",
     "DEPENDENCIES",
     "ENTRY_POINT",
     "GENERATED_CONTRACT_BASIS",
@@ -610,9 +650,11 @@ __all__ = [
     "RUNTIME_CONTRACT_BASIS",
     "RUNTIME_CONTRACT_PATH",
     "SCOPE_REF",
+    "TESTS_DIRECTORY",
     "TRUST",
     "VERIFIER_ID",
     "application_files",
+    "application_source_files",
     "pam_digest",
     "pam_reference",
     "render_pam",

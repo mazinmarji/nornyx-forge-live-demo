@@ -244,7 +244,9 @@ def rendered_contract_digest(brd: bytes) -> str:
     with tempfile.TemporaryDirectory(prefix="nornyx-forge-pam-") as scratch:
         root = Path(scratch)
         (root / "BRD.md").write_bytes(brd)
-        target = generate_brd_contract(root, parse_brd(root / "BRD.md"))
+        # Greenfield: a produced-application manifest is issued only for a
+        # greenfield build, whose flow rendered the greenfield contract (A-063).
+        target = generate_brd_contract(root, parse_brd(root / "BRD.md"), template="greenfield")
         return "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
 
 

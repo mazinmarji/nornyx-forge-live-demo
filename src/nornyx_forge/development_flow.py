@@ -14,6 +14,7 @@ from .contract_generator import (
     render_brd_contract,
     render_runtime_contract,
 )
+from .contract_truth import GREENFIELD_LAYOUT_GOAL, trusted_contract_truth_check
 from .evidence import EvidenceLedger
 from .gates import (
     GREENFIELD_IDENTITY_GATE,
@@ -161,6 +162,18 @@ def failing_gate_details(gates: list[GateResult]) -> str:
     is escaped, and the total is not bounded -- a record, not an argument,
     so it is neither sanitised nor held to the composed goal's ceiling."""
     return "\n\n".join(f"{name}: {tail}" for name, tail in _failing_gate_quotes(gates))
+
+
+def contract_template(repo_mode: str) -> str:
+    """The generated-contract template a build in `repo_mode` renders (A-063).
+
+    A greenfield build produces an application from nothing, in the produced-
+    application layout, so it renders the greenfield template. Every other
+    mode -- certified, target, scout -- builds in a repository Forge adopted,
+    and renders the certified template, exactly as it did before templates
+    existed.
+    """
+    return "greenfield" if repo_mode == "greenfield" else "certified"
 
 
 #: The trusted verifier's test-execution gate in the greenfield profile.
@@ -381,15 +394,20 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
     def requirements(self) -> dict[str, Any]:
         model = parse_brd(self.root / "BRD.md")
         write_requirements_artifacts(self.root, model)
-        generated_contract = generate_brd_contract(self.root, model)
+        template = contract_template(self.repo_mode)
+        generated_contract = generate_brd_contract(self.root, model, template=template)
         # THE BINDING THE GOVERNANCE CHECK NEEDS (A-049): the digest of the
         # bytes generation wrote -- `write_canonical_text` writes the rendered
         # text as UTF-8 with no newline translation -- computed from the
         # renderer, not read back from the path, which a process a provider
         # left running from an earlier build could have replaced in between.
         # The greenfield profile checks only bytes that still have it.
+        # The same renderer call, with the same template, supplies the text the
+        # contract-truth check reads (A-063): the bytes written, never bytes
+        # read back from the workspace.
+        self._generated_brd_contract_text = render_brd_contract(model, template=template)
         contract_digest = "sha256:" + hashlib.sha256(
-            render_brd_contract(model).encode("utf-8")
+            self._generated_brd_contract_text.encode("utf-8")
         ).hexdigest()
         # The runtime operation contract (A-053). The shipped build declares
         # no operation, so this is the empty closed table: every operation a
@@ -509,6 +527,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     "Improve architecture declarations and tests only where required. "
                     "Any .nyx file you create or change must pass `nornyx check`; run it "
                     "and fix the file, or record the check's diagnostics as a limitation."
+                    + (GREENFIELD_LAYOUT_GOAL if self.repo_mode == "greenfield" else "")
                 ),
                 workspace=self.root,
                 allowed_tools=("Read", "Glob", "Grep", "Edit", "Write", "Bash"),
@@ -536,6 +555,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 goal=(
                     "Implement every missing BRD acceptance criterion. Keep external side effects "
                     "behind the Nornyx action boundary, preserve architecture direction, and add tests."
+                    + (GREENFIELD_LAYOUT_GOAL if self.repo_mode == "greenfield" else "")
                 ),
                 workspace=self.root,
                 allowed_tools=("Read", "Glob", "Grep", "Edit", "Write", "Bash"),
@@ -861,10 +881,16 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             # whatever it decided: the build's own contract, bound to the
             # digest recorded when this flow generated it. Its passing record
             # is the only source of this build's `governance_validation`.
+            # The contract-truth check (A-063), in addition to A-049 and after
+            # it: whether that same contract describes the workspace as it
+            # stands now. No mode, flag or variable skips it in greenfield.
             return [
                 *gates,
                 trusted_contract_check(
                     self.root, self.data.get("generated_brd_contract_digest")
+                ),
+                trusted_contract_truth_check(
+                    self.root, getattr(self, "_generated_brd_contract_text", None)
                 ),
             ]
         return default_gates(self.root)
