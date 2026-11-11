@@ -346,7 +346,7 @@ def test_the_translator_refuses_the_bootstrap_under_any_other_executable_or_shap
     elif change == "another snapshot directory":
         command[5] = str(Path(command[5]).parent.with_name("elsewhere") / "brd_contract.nyx")
     elif change == "another gate name":
-        gate["name"] = "review-worker:test-inspector"
+        gate["name"] = "review-worker:test-inspector:verdict"
     assert "governance_validation" not in _translated_kinds(gate), change
 
 

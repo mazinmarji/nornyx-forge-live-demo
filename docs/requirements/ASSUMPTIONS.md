@@ -8947,3 +8947,85 @@ than a path a person can reach.
 **Serves.** A person reviewing their specification sees each heading, list
 item, paragraph or example that no requirement maps, on its own line with
 its position, instead of one block covering several sections.
+
+## A-062 A review-worker gate passes only on an explicit, valid PASS verdict, and that verdict is internal AI review, not independent review or human approval
+
+**The defect.** `acceptance()` ran three review workers -- test, architecture
+and security inspectors -- and turned each into one gate whose outcome was
+`review.success`: whether the worker PROCESS finished. A reviewer that
+concluded `NOT_VERIFIED`, or reported a defect, still produced a passing
+gate. Reviewers had no verdict contract, so each one worded its conclusion
+differently and nothing read it. The test inspector was told to
+"independently verify" tests while its tools were Read, Glob and Grep, so it
+could never run them.
+
+**The rule now.**
+- **One verdict object.** Each reviewer's goal states the exact object it
+  must end with, after the marker line described below,
+  `nornyx.forge.review_verdict.v1`, with exactly the keys
+  `schema`, `role`, `verdict`, `blocking_findings` and
+  `evidence_relied_on`. `verdict` is `PASS`, `FAIL` or `NOT_VERIFIED`, and a
+  `PASS` with any blocking finding is invalid.
+- **A parser that fails closed.** `nornyx_forge.review_verdict.parse_review`
+  reads the worker's recorded output as the adapter stored it: the Claude
+  CLI's JSON envelope, whose `result` holds the reply, or the Codex event
+  stream, whose last completed agent message holds it. Anything other than
+  one well-formed object for the expected role, from a worker that
+  succeeded, is `INVALID`.
+- **The verdict follows one marker line.** The reply ends with a line that
+  reads exactly `NORNYX-REVIEW-VERDICT`, then the verdict object, alone or
+  alone inside one fenced code block, and nothing after it. The marker
+  occurs exactly once. The text after it must decode, strictly and entirely,
+  as one object. The schema identifier, however it is spelled, including
+  with a JSON escape, must not appear before the marker.
+- **Why a marker, not a search.** The first heads of this change found the
+  verdict by scanning the reply for its last JSON object and judging the
+  text around it. Three review rounds each found a reply shape that scan
+  misread: a `PASS` nested in an example or followed by another conclusion,
+  a second verdict whose schema was spelled with an escape, a `PASS` inside
+  an object, array or string never closed, and a delimiter inside a closed
+  string cancelling an open one. Each was a gap in inferring JSON structure
+  from text that need not be JSON. A JSON string cannot hold a raw line
+  break and a bare word is not a JSON token, so no JSON value written before
+  the marker line can extend past it. The text before the marker is
+  therefore never parsed or counted, and every one of those shapes is a
+  test.
+- **Only a completed run is read.** A Claude envelope whose `type` is not
+  `result`, whose `subtype` is not `success`, or whose `is_error` is true
+  yields no reply, and neither does a Codex stream carrying an `error` or
+  `turn.failed` event. Each is `INVALID`.
+- **Two gates per reviewer.** `review-worker:<role>:completed` is the process
+  result. `review-worker:<role>:verdict` passes only on a valid `PASS`.
+  Either failing rejects the build. No repair is requested for a reviewer's
+  verdict.
+- **The test inspector's input.** Its goal carries a short summary of the
+  trusted verifier's recorded test execution in this run -- the gate outcome
+  and the collected, executed, failed and skipped counts, integers only --
+  as read-only input. It judges coverage against that summary and is told
+  not to run tests or claim to have run them; its tools stay read-only.
+- **The summary.** Each review record in `build-summary.json` carries its
+  parsed verdict. `assurance` keeps every existing key with its meaning and
+  adds `internal_ai_review_verdicts`, the count of each parsed verdict.
+
+**Bounds stated here.**
+- A verdict gate passing means the build's own review workers each ended
+  with a valid `PASS`. They are workers the same build launched, so this is
+  internal AI review. It is not independent review: `independent_ai_review`
+  stays `not_established`. It is not human review or approval:
+  `human_review` stays `not_performed` and `production_approval` stays
+  `not_granted`. None of these fields is inferred from another.
+- The parser checks the verdict's form, not whether the reviewer's reasoning
+  is right.
+- The text before the marker is the reviewer's report and is not judged. A
+  report that itself contains a FAIL-shaped object, followed by the marker
+  and a valid `PASS`, reads as that `PASS`: the marked object is the
+  reviewer's verdict by contract. Only a schema mention before the marker is
+  refused.
+- No recorded Codex event stream is pinned in this repository. A stream that
+  does not carry a completed agent message yields no reply text and is
+  `INVALID`.
+- In-session mode keeps its own review records, which already require
+  `status: pass`; it is unchanged.
+
+**Serves.** A reviewer that says it could not verify, or that found a
+blocking defect, now rejects the build instead of passing it.

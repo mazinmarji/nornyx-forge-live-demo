@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
+from review_verdict_support import REVIEW_ROLES, review_output
 
 import nornyx_forge.gates as gate_module
 import nornyx_forge.greenfield_verifier as verifier_module
@@ -73,11 +74,15 @@ class _LocalWorker:
         workspace = Path(request["workspace"])
         if self.action is not None:
             self.action(role, goal, workspace)
+        output = "accepted: true; all checks passed"
+        if role in REVIEW_ROLES:
+            # A review gate passes only on a valid PASS verdict.
+            output = review_output(role, prefix=output + "\n")
         return WorkerResult(
             role=role,
             goal=goal,
             success=True,
-            output="accepted: true; all checks passed",
+            output=output,
             command=("deterministic-local-worker", role),
         )
 
