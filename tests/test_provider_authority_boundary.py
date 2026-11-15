@@ -617,9 +617,11 @@ def test_the_real_flow_hands_the_worker_the_store_and_the_seal_still_holds(tmp_p
         constructed.append(flow)
         return flow
 
-    (tmp_path / "src").mkdir()
+    # The produced-application layout the greenfield contract declares: code
+    # in app/, tests in tests/ (A-063).
+    (tmp_path / "app").mkdir()
     (tmp_path / "tests").mkdir()
-    (tmp_path / "src" / "app.py").write_text(
+    (tmp_path / "app" / "__main__.py").write_text(
         "def add(left: int, right: int) -> int:\n    return left + right\n",
         encoding="utf-8", newline="")
     (tmp_path / "tests" / "test_app.py").write_text(

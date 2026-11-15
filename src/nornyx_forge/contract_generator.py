@@ -9,6 +9,11 @@ from typing import Any
 import yaml
 
 from .nornyx_runtime import OPERATION_REGISTRY, OPERATION_UNREGISTERED, exercised_capability
+from .produced_app_manifest import (
+    APPLICATION_PACKAGE,
+    GENERATED_CONTRACT_PATH,
+    TESTS_DIRECTORY,
+)
 from .requirements import RequirementsModel
 from .util import digest, write_canonical_text
 
@@ -20,10 +25,63 @@ def _safe_id(value: str) -> str:
     return cleaned or "BRD-UNSPECIFIED"
 
 
-def generate_brd_contract(root: Path, model: RequirementsModel) -> Path:
-    """Generate a deterministic Nornyx repo-harness contract from a BRD model."""
-    target = root / ".nornyx/generated/brd_contract.nyx"
-    write_canonical_text(target, render_brd_contract(model))
+#: The contract templates, closed. Every caller names one; none is a default.
+#:
+#: * `certified`: the layout of a repository Forge adopts as its foundation,
+#:   such as Forge's own: code in `src/`, docs in `docs/`, a validation script,
+#:   and contracts in `.nornyx/contracts/`. Byte-identical to the one template
+#:   Forge rendered before templates existed.
+#: * `greenfield`: the layout of an application Forge produces from nothing:
+#:   code in the produced-application package (`produced_app_manifest`), tests
+#:   in `tests/`, and the generated contract as the authority. It names only
+#:   paths a valid generated project is required to contain (A-063).
+CONTRACT_TEMPLATES = ("certified", "greenfield")
+
+_GREENFIELD_SOURCE = APPLICATION_PACKAGE + "/"
+_GREENFIELD_TESTS = TESTS_DIRECTORY + "/"
+
+#: What each template declares where the two differ: every goal's scope and
+#: validation commands, and the repository context's include and authority.
+_LAYOUTS: Mapping[str, Mapping[str, tuple[str, ...]]] = {
+    "certified": {
+        "scope": ("BRD.md", "src/", "tests/", "docs/"),
+        "validation": ("python scripts/validate_repository.py", "python -m pytest -q"),
+        "include": (
+            "BRD.md",
+            "README.md",
+            "docs/**/*.md",
+            "src/**/*",
+            "tests/**/*",
+            ".nornyx/contracts/*.nyx",
+        ),
+        "authority": ("BRD.md", ".nornyx/contracts/*.nyx", "tests/**/*"),
+    },
+    "greenfield": {
+        "scope": ("BRD.md", _GREENFIELD_SOURCE, _GREENFIELD_TESTS),
+        "validation": ("python -m pytest -q",),
+        "include": (
+            "BRD.md",
+            _GREENFIELD_SOURCE + "**/*",
+            _GREENFIELD_TESTS + "**/*",
+            GENERATED_CONTRACT_PATH,
+        ),
+        "authority": ("BRD.md", GENERATED_CONTRACT_PATH, _GREENFIELD_TESTS + "**/*"),
+    },
+}
+
+def _layout(template: str) -> Mapping[str, tuple[str, ...]]:
+    if type(template) is not str or template not in _LAYOUTS:
+        raise ValueError(
+            f"contract template {template!r} is not one of {list(CONTRACT_TEMPLATES)}"
+        )
+    return _LAYOUTS[template]
+
+
+def generate_brd_contract(root: Path, model: RequirementsModel, *, template: str) -> Path:
+    """Generate a deterministic Nornyx repo-harness contract from a BRD model,
+    in the named `template` (`CONTRACT_TEMPLATES`)."""
+    target = root / GENERATED_CONTRACT_PATH
+    write_canonical_text(target, render_brd_contract(model, template=template))
     return target
 
 
@@ -48,13 +106,16 @@ def _delivery_goal(model: RequirementsModel) -> str:
     )
 
 
-def render_brd_contract(model: RequirementsModel) -> str:
+def render_brd_contract(model: RequirementsModel, *, template: str) -> str:
     """The contract `generate_brd_contract` writes, as text, written nowhere.
 
     Pure and deterministic, so the digest a build records for its contract
     (A-049) is computed from the text it wrote rather than read back from a
-    path something else could have replaced in between.
+    path something else could have replaced in between. `template` names the
+    layout the contract describes, and has no default: a caller that names
+    none is refused rather than handed one (A-063).
     """
+    layout = _layout(template)
 
     purpose = next(
         (item.statement for item in model.requirements if item.id == "BRD-001"),
@@ -68,15 +129,12 @@ def render_brd_contract(model: RequirementsModel) -> str:
                 "title": item.title,
                 "phase": "brd-delivery",
                 "goal": item.statement,
-                "scope": ["BRD.md", "src/", "tests/", "docs/"],
+                "scope": list(layout["scope"]),
                 "non_goals": [
                     "production_deployment",
                     "automatic_human_approval",
                 ],
-                "validation": [
-                    "python scripts/validate_repository.py",
-                    "python -m pytest -q",
-                ],
+                "validation": list(layout["validation"]),
                 "evidence": ".nornyx/runs/",
                 "approval": (
                     "autonomous demonstration acceptance only; "
@@ -106,25 +164,14 @@ def render_brd_contract(model: RequirementsModel) -> str:
         "contexts": [
             {
                 "name": "GeneratedRepoContext",
-                "include": [
-                    "BRD.md",
-                    "README.md",
-                    "docs/**/*.md",
-                    "src/**/*",
-                    "tests/**/*",
-                    ".nornyx/contracts/*.nyx",
-                ],
+                "include": list(layout["include"]),
                 "exclude": [
                     ".env",
                     "secrets/**",
                     ".venv/**",
                     ".nornyx/runs/**",
                 ],
-                "authority": [
-                    "BRD.md",
-                    ".nornyx/contracts/*.nyx",
-                    "tests/**/*",
-                ],
+                "authority": list(layout["authority"]),
                 "budget": {
                     "max_tokens": 100000,
                     "reserve_output_tokens": 8000,

@@ -384,7 +384,7 @@ def test_the_build_binds_both_contracts_and_the_governance_check_reads_only_its_
 
     flow.requirements()
 
-    brd_text = generator.render_brd_contract(model).encode("utf-8")
+    brd_text = generator.render_brd_contract(model, template="greenfield").encode("utf-8")
     runtime_text = generator.render_runtime_contract(model).encode("utf-8")
     brd_digest = "sha256:" + hashlib.sha256(brd_text).hexdigest()
     runtime_digest = "sha256:" + hashlib.sha256(runtime_text).hexdigest()

@@ -55,7 +55,7 @@ def _project(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "project"
     root.mkdir()
     (root / "BRD.md").write_text(BRD, encoding="utf-8")
-    contract = generate_brd_contract(root, parse_brd(root / "BRD.md"))
+    contract = generate_brd_contract(root, parse_brd(root / "BRD.md"), template="greenfield")
     return root, _digest(contract.read_bytes())
 
 
@@ -559,15 +559,15 @@ def test_the_recorded_digest_is_of_the_rendered_contract_not_a_re_read(
     root, _ = _project(tmp_path)
     generate = development_flow.generate_brd_contract
 
-    def generate_then_swap(project: Path, model):
-        target = generate(project, model)
+    def generate_then_swap(project: Path, model, **kwargs):
+        target = generate(project, model, **kwargs)
         target.write_text(REFUSED, encoding="utf-8", newline="")
         return target
 
     monkeypatch.setattr(development_flow, "generate_brd_contract", generate_then_swap)
     flow = development_flow.DevelopmentFlow(root, worker_mode="in-session", repo_mode="greenfield")
     flow.requirements()
-    rendered = render_brd_contract(parse_brd(root / "BRD.md"))
+    rendered = render_brd_contract(parse_brd(root / "BRD.md"), template="greenfield")
     assert flow.data["generated_brd_contract_digest"] == _digest(rendered.encode("utf-8"))
     gate = _check(root, flow.data["generated_brd_contract_digest"])
     _not_run(gate)

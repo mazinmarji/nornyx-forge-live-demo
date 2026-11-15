@@ -275,7 +275,7 @@ def _contract_a_build_generates(tmp_path: Path) -> str:
     brd = tmp_path / "flow-view" / "BRD.md"
     brd.parent.mkdir()
     brd.write_text(brd_from_capsule(document), encoding="utf-8", newline="")
-    return render_brd_contract(parse_brd(brd))
+    return render_brd_contract(parse_brd(brd), template="greenfield")
 
 
 def test_the_project_contract_is_the_one_its_confirmed_requirements_generate(

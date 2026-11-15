@@ -9029,3 +9029,88 @@ could never run them.
 
 **Serves.** A reviewer that says it could not verify, or that found a
 blocking defect, now rejects the build instead of passing it.
+
+## A-063 A greenfield build's generated contract uses the greenfield template, and a trusted gate refuses a contract that does not describe the workspace's layout
+
+**The defect.** `render_brd_contract(model)` rendered one template for every
+repository mode. Every goal scoped `BRD.md`, `src/`, `tests/` and `docs/`;
+validation ran `python scripts/validate_repository.py` and
+`python -m pytest -q`; the repository context included `src/**/*`,
+`docs/**/*.md`, `README.md` and `.nornyx/contracts/*.nyx`, with
+`.nornyx/contracts/*.nyx` as an authority. That is Forge's own layout, and it
+is true in `repo_mode="certified"`. A greenfield project is laid out
+differently: the produced-application convention puts its code in `app/`
+(`produced_app_manifest.ENTRY_POINT`), it has no
+`scripts/validate_repository.py`, and its contract is written to
+`.nornyx/generated/brd_contract.nyx`, so `.nornyx/contracts/*.nyx` matches
+nothing. `nornyx check` (A-049) validates a contract's structure, not whether
+it describes the workspace, so a greenfield build was governed by a contract
+that scoped none of its code, named a script that did not exist and gave an
+authority that matched no file, and nothing refused it.
+
+**The rule now.**
+- **Two templates, always named.** `render_brd_contract(model, *, template)`
+  and `generate_brd_contract(root, model, *, template)` take `template`, one
+  of `CONTRACT_TEMPLATES = ("certified", "greenfield")`, with no default; an
+  unknown name is refused. The written bytes and the digest still come from
+  the same renderer call with the same template.
+- **`certified`** is the previous template, byte for byte. Its SHA-256 for two
+  BRDs, one with a declared specification digest and one without, was
+  computed with the renderer before the change and is pinned by a test.
+- **`greenfield`** declares the produced-application layout, taken from
+  `produced_app_manifest`'s constants: scope `BRD.md`, `app/`, `tests/`;
+  validation `python -m pytest -q` only; include `BRD.md`, `app/**/*`,
+  `tests/**/*` and the generated contract path; authority `BRD.md`, the
+  generated contract path and `tests/**/*`. It declares nothing a generated
+  project need not contain (`src/`, `docs/`, `README.md`).
+- **Which caller renders which.** `DevelopmentFlow` renders `greenfield` in
+  `repo_mode="greenfield"` and `certified` in every other mode (certified,
+  target, scout), as before. The gated build's stage contract
+  (`gate_handoff`), the produced-application manifest's contract digest
+  (`produced_app_handoff`) and the onboarding authoring view
+  (`brd_authoring`) render `greenfield`: each serves only a greenfield build.
+- **Builder goals name the scope.** In greenfield mode the solution-architect
+  and application-builder goals say the code goes in `app/` and the tests in
+  `tests/`. In every other mode they are unchanged.
+- **The `greenfield:contract-truth` gate.** Forge's trusted parent runs it in
+  greenfield acceptance, after `greenfield:nornyx-contract-check`, which is
+  unchanged in its command and its place, and again on the final subject
+  after the reviewers. It reads the text the digest-bound renderer call
+  returned, never bytes read back from the workspace, and the workspace as
+  the trusted verifier's collection rule lists it, plus the generated
+  contract file Forge wrote when it is a regular file. It fails, with a
+  reason, when the contract cannot be parsed or lacks goals, a scope,
+  validation commands, the `GeneratedRepoContext` context or its include or
+  authority patterns; when the declared source scope holds no application
+  source; when application source lies outside that scope and outside
+  `tests/`; when a validation command names a script the workspace does not
+  contain; and when an include or authority pattern matches no file. No mode,
+  environment variable or flag skips it. A failure is an ordinary failing
+  gate: it rejects the build, and the existing repair loop treats it as it
+  treats any failing gate.
+- **Application source, defined once.** It is
+  `produced_app_manifest.application_source_files`: the Python files among
+  the subject. The subject's exclusions are the trusted verifier's own --
+  `.git/`, `.hg/`, `.svn/`, `.nornyx/`, `.venv/`, `venv/`, `__pycache__/`,
+  `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `build/`,
+  `dist/` and `node_modules/`, at any depth -- and a named capsule store's
+  directory is removed as Forge's authority, not product. The gate names no
+  store, so a Python file anywhere outside `app/` and `tests/` counts against
+  the contract.
+
+**Bounds stated here.**
+- The gate proves the contract describes the workspace's LAYOUT: where the
+  source is, that the named scripts exist and that every pattern matches a
+  file. It does not prove the code is correct, safe or confined, and it does
+  not prove the contract's goals are met.
+- Only arguments of a validation command that contain a path separator or end
+  in a script suffix (`.py`, `.sh`, `.ps1`, `.bat`, `.cmd`) are read as
+  scripts; a module run with `-m` and the program itself are not.
+- Only Python files are application source, as in `static_findings`. Files of
+  other kinds are not checked against the scope.
+- Certified, target and scout builds are unchanged and are not checked by this
+  gate.
+- Passing it establishes no independent review and no human approval.
+
+**Serves.** A greenfield build whose generated contract does not describe its
+code is refused instead of accepted.

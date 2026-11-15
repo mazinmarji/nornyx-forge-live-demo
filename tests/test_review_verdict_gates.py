@@ -21,7 +21,7 @@ from review_verdict_support import (
     envelope,
     review_output,
 )
-from test_trusted_greenfield_acceptance import _valid_project
+from test_trusted_greenfield_acceptance import _valid_greenfield_project
 
 import nornyx_forge.development_flow as flow_module
 from nornyx_forge.development_flow import DevelopmentFlow, verifier_test_summary
@@ -42,6 +42,13 @@ BRD = (
     "# BRD\n\n## BRD-001 Purpose\n\nAdd numbers.\n\n"
     "## BRD-002 Functional requirements\n\n### BRD-F-001 Add\n\nAdd two numbers.\n"
 )
+
+#: The produced-application layout the greenfield contract declares: code in
+#: app/, tests in tests/.
+WORKSPACE = {
+    "app/__main__.py": "def add(left: int, right: int) -> int:\n    return left + right\n",
+    "tests/test_app.py": "# BRD-F-001\n\ndef test_add():\n    assert 1 + 1 == 2\n",
+}
 
 
 class _StubWorker:
@@ -67,6 +74,12 @@ def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
          reviews: dict[str, tuple[bool, str]] | None = None,
          completion: Any = COMPLETION) -> tuple[dict, _StubWorker]:
     (tmp_path / "BRD.md").write_text(BRD, encoding="utf-8")
+    # The verifier is stubbed; the workspace still has the layout the
+    # generated contract declares, so the contract-truth gate passes and only
+    # the review stage decides.
+    for relative, text in WORKSPACE.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(text, encoding="utf-8")
     gates = [GateResult(f"greenfield:{gate}", True, "stub verifier gate") for gate in GREENFIELD_GATE_IDS]
     provenance = {"test_execution": {"completion": completion}}
     monkeypatch.setattr(flow_module, "trusted_greenfield_gates",
@@ -224,7 +237,7 @@ def test_the_recorded_outputs_of_an_earlier_accepted_run_reject_the_build(tmp_pa
 def test_the_real_verifier_and_three_passes_accept_and_the_goal_quotes_its_record(tmp_path):
     """No stub on the verifier: the trusted greenfield profile runs, and the
     test inspector is shown exactly the counts it recorded."""
-    _valid_project(tmp_path)
+    _valid_greenfield_project(tmp_path)
     flow = DevelopmentFlow(tmp_path, worker_mode="claude-code", repo_mode="greenfield")
     worker = _StubWorker()
     flow.worker = worker

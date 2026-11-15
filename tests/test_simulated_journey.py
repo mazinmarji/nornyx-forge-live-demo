@@ -73,6 +73,7 @@ from nornyx_forge.brd_authoring import brd_from_capsule
 from nornyx_forge.capsule_store import CapsuleStore
 from nornyx_forge.claude_worker import ClaudeCodeWorker
 from nornyx_forge.codex_worker import CodexWorker
+from nornyx_forge.contract_truth import CONTRACT_TRUTH_GATE
 from nornyx_forge.control_plane_session import NO_SESSION, REDEEM_PATH
 from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.experience import MANDATORY_STAGES
@@ -151,6 +152,7 @@ GENERATED_CONTRACT = Path(".nornyx") / "generated" / "brd_contract.nyx"
 PASSING_GATES = [
     *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
     (GOVERNANCE_GATE, True),
+    (CONTRACT_TRUTH_GATE, True),
     *((f"review-worker:{role}:{fact}", True)
       for role in REVIEW_ROLES for fact in ("completed", "verdict")),
     ("build-evidence-ledger-valid-before-verdict", True)]
@@ -163,7 +165,7 @@ PASSING_GATES = [
 def simulated_application(requirements: dict[str, str], defect: str | None = None) -> dict[str, str]:
     """The files the simulated provider writes, as a pure function of the BRD.
 
-    For each BRD requirement: an entry in `src/simulated_app.py` mapping its
+    For each BRD requirement: an entry in `app/simulated_app.py` mapping its
     id to its statement, and a test in `tests/test_simulated_app.py` that
     names the id and asserts the statement. `defect` makes the negative
     specimens: `absent` writes nothing, `untraced` writes tests that name no
@@ -188,7 +190,7 @@ def simulated_application(requirements: dict[str, str], defect: str | None = Non
     )
     if defect == "untraced":
         tests = (
-            "from simulated_app import REQUIREMENTS\n\n\n"
+            "from app.simulated_app import REQUIREMENTS\n\n\n"
             "def test_every_statement_is_recorded():\n"
             f"    assert len(REQUIREMENTS) == {len(served)}\n"
         )
@@ -196,13 +198,13 @@ def simulated_application(requirements: dict[str, str], defect: str | None = Non
         tested = list(requirements.items())
         if defect == "omit-last":
             tested = tested[:-1]
-        tests = "from simulated_app import requirement\n" + "".join(
+        tests = "from app.simulated_app import requirement\n" + "".join(
             f"\n\ndef test_{ident.lower().replace('-', '_')}():\n"
             f"    # {ident}\n"
             f"    assert requirement({ident!r}) == {text!r}\n"
             for ident, text in tested
         )
-    return {"src/simulated_app.py": source, "tests/test_simulated_app.py": tests}
+    return {"app/simulated_app.py": source, "tests/test_simulated_app.py": tests}
 
 
 class SimulatedProvider:
@@ -504,7 +506,7 @@ def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvid
     assert run.state("scope confirmed")["journey"]["actions"] == ["start_build"]
 
     # The governed build. Nothing the provider will write exists yet.
-    assert not (run.project / "src").exists() and not (run.project / "tests").exists()
+    assert not (run.project / "app").exists() and not (run.project / "tests").exists()
     assert _call(client, "POST", "/api/build", 200, "start the build",
                  json={"actor": HUMAN}) == {"status": "running", "provider": PROVIDER}
     deadline = time.monotonic() + BUILD_DEADLINE_SECONDS
@@ -900,27 +902,32 @@ def _generate_a_refused_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     the binding holds and only the CLI's verdict can refuse the build."""
     from nornyx_forge import contract_generator, development_flow  # noqa: PLC0415 - A-049
 
-    def render_refused(_model: Any) -> str:
+    def render_refused(_model: Any, **_template: Any) -> str:
         return REFUSED_CONTRACT
 
     monkeypatch.setattr(contract_generator, "render_brd_contract", render_refused)
     monkeypatch.setattr(development_flow, "render_brd_contract", render_refused)
 
 
-@pytest.mark.parametrize("case, outcome, says", [
-    ("refused", "refused", "nornyx check refused the generated build contract"),
-    ("edited", "not_run", "changed after generation"),
-    ("deleted", "not_run", "is missing"),
-    ("errored", "errored", "nornyx check errored"),
+@pytest.mark.parametrize("case, outcome, says, untrue", [
+    ("refused", "refused", "nornyx check refused the generated build contract",
+     "the generated contract has no goals"),
+    ("edited", "not_run", "changed after generation", None),
+    ("deleted", "not_run", "is missing",
+     "the authority pattern '.nornyx/generated/brd_contract.nyx' matches no file"),
+    ("errored", "errored", "nornyx check errored", None),
 ])
 def test_eight_rows_without_a_passing_contract_check_are_refused_at_build(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, outcome: str, says: str):
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, outcome: str, says: str,
+        untrue: str | None):
     """Fail closed (A-049). The verifier accepts the application in every
     case; what fails is the governance check of the contract the build
     generated: Nornyx refuses it, the provider edited it after generation (to
     bytes Nornyx would pass), the provider deleted it, or the check could not
     run. The build is not accepted, the lifecycle records a failed BUILD and
-    no governance validation, and READY stays refused."""
+    no governance validation, and READY stays refused. Where the rendered
+    contract has no goals, or the contract it names as its authority is gone,
+    the contract-truth gate (A-063) refuses it too, with that reason."""
     monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "0")
     if case == "refused":
         _generate_a_refused_contract(monkeypatch)
@@ -934,7 +941,10 @@ def test_eight_rows_without_a_passing_contract_check_are_refused_at_build(
     assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
     result = status["result"]
     failed = [gate for gate in result["gates"] if not gate["passed"]]
-    assert [gate["name"] for gate in failed] == [GOVERNANCE_GATE], failed
+    assert [gate["name"] for gate in failed] == (
+        [GOVERNANCE_GATE] + ([CONTRACT_TRUTH_GATE] if untrue else [])), failed
+    if untrue:
+        assert untrue in failed[1]["detail"], failed[1]["detail"]
     gate = failed[0]
     assert says in gate["detail"], gate["detail"]
     assert gate["provenance"]["outcome"] == outcome
@@ -952,7 +962,8 @@ def test_eight_rows_without_a_passing_contract_check_are_refused_at_build(
 
 
 @pytest.mark.parametrize("defect, refused_by", [
-    ("absent", ["project-structure", "requirements-traceability", "test-semantics", "test-execution"]),
+    ("absent", ["project-structure", "requirements-traceability", "test-semantics", "test-execution",
+                "contract-truth"]),
     ("untraced", ["requirements-traceability", "test-execution"]),
     ("failing", ["test-execution"]),
 ])
@@ -960,8 +971,9 @@ def test_the_real_verifier_refuses_what_the_simulated_provider_got_wrong(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str, refused_by: list[str]):
     """The provider reports success every time; the verifier decides. Nothing
     generated, tests that name no requirement, and tests that fail when run
-    are each refused by exactly the verifier's own gates for that defect, and
-    the lifecycle records a failed BUILD in the contract's words with nothing
+    are each refused by exactly the verifier's own gates for that defect (and
+    nothing generated also by the contract-truth gate: the contract declares
+    an app/ and tests/ that do not exist, A-063), and the lifecycle records a failed BUILD in the contract's words with nothing
     at TEST or GOVERN. No repair round runs (the flow's own knob), so the
     simulated provider is asked exactly twice."""
     monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "0")
@@ -1012,7 +1024,7 @@ def test_without_the_seam_the_real_provider_is_reached_and_the_build_stops(
     persisted = run.store().load_experience()
     assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}
     assert "the build did not complete" in persisted["history"][-1]["detail"]
-    assert not (run.project / "src").exists() and not (run.project / "tests").exists()
+    assert not (run.project / "app").exists() and not (run.project / "tests").exists()
     assert run.attempts == []
 
 
