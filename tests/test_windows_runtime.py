@@ -1441,6 +1441,35 @@ def _await_opened(run: "Launch", count: int = 1, timeout: float = 10.0) -> None:
     assert len(run.opened) >= count, f"the browser was opened {len(run.opened)} times, not {count}"
 
 
+def _await_told(run: "Launch", said: str, timeout: float = 10.0) -> tuple[str, str]:
+    """The first notice whose text contains `said`, or a red test at the deadline.
+
+    On the browser-open failure branch the runtime's readiness thread records,
+    then logs, then tells -- three statements, in that order, on a daemon
+    thread no test joins. A test that waits for the record alone and then
+    reads `run.notices` samples inside that gap: the list is empty, a scan of
+    it for secrets passes on nothing, and the assertion that a notice exists
+    is red. Observed three times as a CI failure on the Linux jobs, each with
+    the record correct and only the notice missing.
+
+    Telling is the LAST of the three, so a caller that has waited here may
+    read the record, the log and the notices as one settled outcome. The wait
+    is bounded and fails by name: it does not sleep past its deadline, it
+    retries nothing, and it never returns without a notice. Held by
+    `test_a_failed_browser_open_records_and_logs_neither_the_nonce_nor_the_token`,
+    which keeps the gap open and measures this wait inside it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        for title, text in list(run.notices):
+            if said in text:
+                return title, text
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"no notice containing {said!r} within {timeout}s: "
+                f"record={run.record()} notices={run.notices}")
+        time.sleep(0.05)
+
+
 def _nonce_of(opened_url: str) -> str:
     return opened_url.split("#", 1)[1]
 
@@ -1709,19 +1738,53 @@ def test_a_failed_browser_open_records_and_logs_neither_the_nonce_nor_the_token(
         failure(url)
 
     run.seams["open_browser"] = opener
+    # The runtime records the failed opening, then logs it, then tells the
+    # person, on its own thread. That order is deliberate and is not the
+    # defect. The defect was this test: it waited for the record and then read
+    # `run.notices`, and inside the gap between the two the list was empty, so
+    # the scan below passed on nothing and the last assertion was red (three
+    # CI failures, each green on a re-run). So the gap is HELD OPEN here, on
+    # every case, by a notify seam that reaches the telling and waits to be
+    # released -- and the wait that closes it is measured inside it.
+    reached, release = threading.Event(), threading.Event()
+    tell = run.seams["notify"]
+
+    def held(title: str, text: str) -> None:
+        reached.set()
+        release.wait(30)
+        tell(title, text)
+
+    run.seams["notify"] = held
     run.start()
-    ready = run.wait_for("ready")
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and (run.record() or {}).get("browser", {}).get("opened") is not False:
-        time.sleep(0.05)
-    record = _settled(run.record())
-    assert record["browser"]["opened"] is False and record["browser"]["error"], record["browser"]
+    try:
+        ready = run.wait_for("ready")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and (run.record() or {}).get("browser", {}).get("opened") is not False:
+            time.sleep(0.05)
+        record = _settled(run.record())
+        assert record["browser"]["opened"] is False and record["browser"]["error"], record["browser"]
+        assert reached.wait(10), "the runtime never reached the point of telling the person"
+        # The state the unfixed test sampled: recorded, and nothing told yet.
+        assert run.notices == [], f"the gap is not open: {run.notices}"
+        started = time.monotonic()
+        with pytest.raises(AssertionError, match="no notice containing"):
+            _await_told(run, ready["url"], timeout=0.3)
+        waited = time.monotonic() - started
+        assert 0.3 <= waited < 5, f"the wait took {waited:.3f}s against a 0.3s deadline"
+    finally:
+        release.set()
+    # Telling is the last of the three acts. Wait for it before reading any of
+    # them, so that what is scanned is the failure line and the notice.
+    _await_told(run, ready["url"])
     assert targets and "#" in targets[0]
     nonce = _nonce_of(targets[0])
     secrets = {"token": run.token, "nonce": nonce, "target": targets[0]}
     trail = run.paths.failures.read_text(encoding="utf-8") if run.paths.failures.exists() else ""
+    log_text = run.paths.log.read_text(encoding="utf-8")
+    assert run.notices, "there is no notice to scan: the scan below would pass on nothing"
+    assert "browser not opened" in log_text, "there is no failure line to scan in the log"
     for blob, where in ((run.paths.record.read_text(encoding="utf-8"), "record"),
-                        (run.paths.log.read_text(encoding="utf-8"), "log"),
+                        (log_text, "log"),
                         (json.dumps(run.notices), "notices"), (trail, "trail")):
         _secret_free(blob, secrets, where)
     error = record["browser"]["error"]
