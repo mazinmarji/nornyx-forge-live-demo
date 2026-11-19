@@ -1008,8 +1008,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # another failure not overriding its prefix, the build refusal's
     # plain explanation beside its unchanged verbatim reason, the failure
     # fields on every journey shape, and the served page rendering them above
-    # the verbatim failure.
-    "tests/test_plain_language_reasons.py": 13,
+    # the verbatim failure. A-064 grows it 14 -> 28, floor band(28) = 26: a
+    # rejected run naming its first failing check and the requirements it
+    # found untested, the contract's refusal kept first and within its bound,
+    # every gate passing named as such, an unlisted gate and a forged or
+    # inconsistent note naming nothing, the note surviving a restart and
+    # reaching the receipt without gate text, records from before the note
+    # reading as they did, a malformed BRD heading not reported as an untested
+    # requirement, and the vocabulary and identifier pattern pinned to the
+    # profile and the verifier.
+    "tests/test_plain_language_reasons.py": 26,
     # A-058's journey receipt: 97 collected (57 at introduction, 40 added by
     # its review repairs), floor at band(97) = 88. The exact shape and unknown or missing keys refused; a
     # refused real build kept REFUSED in the route's own words; a seam journey
@@ -2711,14 +2719,30 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # new module sits above its band. NO SKIP IS ADDED, no module joins a
 # platform job, and no provider row, confinement row or gate profile moved.
 #
+# 2026-11-19: A-064 ADDS NO MODULE AND MOVES ONE, measured from fresh
+# collections of the base and of this tree as an unprivileged user, which
+# differ in that module alone: tests/test_plain_language_reasons.py 14 -> 27
+# (floor band(14) = 13 -> band(27) = 25). 7355 collect across 154 modules;
+# the module-floor sum rises by 12 to 6694 and the aggregate follows to 6702,
+# keeping the same 8 above it; band(n) 6608 -> 6620, the room below what
+# collects 652 -> 653, and the slack the bands grant 660 -> 661, because the
+# module sits 2 above its band where it sat 1. NO SKIP IS ADDED, the module
+# joins no platform job, so the windows-runtime job's floor is untouched, and
+# no provider row, confinement row or gate profile moved. Its review round,
+# re-measured from a fresh collection, grows that module 27 -> 28 (floor
+# 25 -> 26) and moves no other: 7356 collect across 154 modules, the
+# module-floor sum rises by 1 to 6695, the aggregate follows to 6703 keeping
+# the same 8 above it, band(n) 6620 -> 6621, and the room below what
+# collects and the slack the bands grant stay 653 and 661. NO SKIP IS ADDED.
+#
 # (rows below):
 #
-#     collected across tests/     7342   (154 modules)
-#     sum of the module floors    6682
-#     band(7342) = ceil(0.9*n)    6608
-#     MINIMUM_COLLECTED           6690
+#     collected across tests/     7356   (154 modules)
+#     sum of the module floors    6695
+#     band(7356) = ceil(0.9*n)    6621
+#     MINIMUM_COLLECTED           6703
 #     above the module sum          8
-#     below what collects         652
+#     below what collects         653
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2940,7 +2964,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 660 in total, and the aggregate refuses
+# per-module bands already grant 661 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3209,7 +3233,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6690
+MINIMUM_COLLECTED = 6703
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
