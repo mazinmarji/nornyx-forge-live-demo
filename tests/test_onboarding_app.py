@@ -400,9 +400,16 @@ def test_a_sealed_store_whose_directory_was_removed_is_refused_not_absent(
     """No project and a removed project are different facts. The seal, kept
     outside the project, still names the store, so its removal is the
     seal's finding, refused as `/api/state` refuses it."""
+    import os
     import shutil
+    import stat
 
     _requirements_confirmed(client)
+    # Git writes its object files read-only, and on Windows a read-only file
+    # cannot be unlinked, so the removal is set up by clearing that bit first.
+    for directory, _dirs, files in os.walk(tmp_path / "capsule"):
+        for name in files:
+            os.chmod(os.path.join(directory, name), stat.S_IREAD | stat.S_IWRITE)
     shutil.rmtree(tmp_path / "capsule")
     response = client.get("/api/governance")
     assert response.status_code == 409, response.text
