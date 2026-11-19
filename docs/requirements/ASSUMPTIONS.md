@@ -9138,10 +9138,13 @@ serving process and is gone after a restart.
   review-worker gates by their shape, without the role), `unlisted` for any
   other name -- a repository-mode gate is named by its command line -- and
   `none` when every gate passed. `<ids>` is read only from the
-  requirements-traceability gate's detail: up to five well-formed BRD
+  requirements-traceability gate's detail, and only from its diagnostics that
+  are exactly "tests do not reference <id>": up to five well-formed BRD
   identifiers (`plain_reasons.REQUIREMENT_ID`, the verifier's own pattern,
-  restated and pinned equal by a test), then a count. No gate name or detail
-  text is copied.
+  restated and pinned equal by a test), then a count. The same gate names a
+  malformed BRD heading by its identifier; that is a fault in the BRD, not
+  missing coverage, so it names the check and lists nothing. No gate name or
+  detail text is copied.
 - **The bound holds.** The reason stays within the 500 characters
   `experience.fail` allows: the identifiers give way to a count, then the
   note is left out.

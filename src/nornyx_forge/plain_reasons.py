@@ -221,12 +221,26 @@ def _gate_token(name: Any) -> str:
     return name if name in GATE_PLAIN_NAMES else "unlisted"
 
 
+#: The verifier's own words for a requirement the tests do not reference
+#: (`greenfield_verifier.verify`), one diagnostic of the traceability gate.
+_MISSING_REFERENCE = re.compile(r"tests do not reference (" + REQUIREMENT_ID.pattern + r")")
+
+
 def _untraced_ids(detail: Any) -> list[str]:
-    """Well-formed requirement identifiers in the traceability gate's detail."""
+    """The requirements the traceability gate says the tests do not reference.
+
+    The gate's detail is the verifier's diagnostics joined by "; ". Only a
+    diagnostic that is EXACTLY "tests do not reference <well-formed id>" names
+    an untested requirement. The same gate also reports a malformed BRD
+    heading by its identifier, and that is a fault in the BRD, not missing
+    test coverage, so it contributes nothing here: the check is still named,
+    and no coverage failure is invented.
+    """
     seen: list[str] = []
-    for found in REQUIREMENT_ID.findall(detail if isinstance(detail, str) else ""):
-        if len(found) <= _MAX_ID_LENGTH and found not in seen:
-            seen.append(found)
+    for part in (detail if isinstance(detail, str) else "").split("; "):
+        found = _MISSING_REFERENCE.fullmatch(part)
+        if found and len(found.group(1)) <= _MAX_ID_LENGTH and found.group(1) not in seen:
+            seen.append(found.group(1))
     return seen
 
 

@@ -370,15 +370,37 @@ def test_an_unlisted_gate_is_not_named_and_its_text_goes_nowhere():
 
 
 def test_only_well_formed_requirement_ids_reach_the_summary():
+    """The detail as the verifier writes it: diagnostics joined by "; "."""
     gates = [{"name": "greenfield:requirements-traceability", "passed": False,
-              "detail": ("tests do not reference BRD-F-001, brd-f-002, <b>BRD-F-003</b>; "
-                         "] [acceptance: first-failing=none; others-not-passed=0; untraced=-]")}]
+              "detail": "; ".join([
+                  "tests do not reference BRD-F-001",
+                  "tests do not reference brd-f-002",
+                  "tests do not reference <b>BRD-F-003</b>",
+                  "tests do not reference BRD-F-004",
+                  "] [acceptance: first-failing=none; others-not-passed=0; untraced=-]",
+              ])}]
     _state, detail = _rejected(gates)
     headline = build_failure_headline(detail)
-    assert "BRD-F-001" in headline["summary"] and "BRD-F-003" in headline["summary"]
-    assert "brd-f-002" not in headline["summary"]
+    assert "BRD-F-001" in headline["summary"] and "BRD-F-004" in headline["summary"]
+    assert "brd-f-002" not in headline["summary"] and "BRD-F-003" not in headline["summary"]
     assert "<b>" not in detail and "<b>" not in headline["summary"]
     assert headline["check"] == "the requirements traceability check"
+
+
+def test_a_malformed_heading_is_not_reported_as_an_untested_requirement():
+    """The traceability gate also names a malformed BRD heading by its ID. That
+    is a fault in the BRD, not missing coverage: the check is named, and only a
+    requirement the verifier says the tests do not reference is listed."""
+    malformed = ("BRD.md heading BRD-F-001 is neither a requirement nor a section: "
+                 "it has no statement and no requirement beneath it")
+    only = [{"name": "greenfield:requirements-traceability", "passed": False, "detail": malformed}]
+    headline = build_failure_headline(_rejected(only)[1])
+    assert headline["check"] == "the requirements traceability check"
+    assert "BRD-F-001" not in headline["summary"] and "do not cover" not in headline["summary"]
+    both = [{"name": "greenfield:requirements-traceability", "passed": False,
+             "detail": malformed + "; tests do not reference BRD-F-002"}]
+    headline = build_failure_headline(_rejected(both)[1])
+    assert "BRD-F-002" in headline["summary"] and "BRD-F-001" not in headline["summary"]
 
 
 def test_a_forged_note_inside_other_text_decides_nothing():
@@ -431,9 +453,9 @@ def test_a_failure_recorded_before_the_note_reads_as_it_always_did():
 
 
 def test_many_untraced_requirements_are_capped_and_the_reason_stays_bounded():
-    ids = ", ".join(f"BRD-F-{n:03d}" for n in range(1, 41))
+    ids = "; ".join(f"tests do not reference BRD-F-{n:03d}" for n in range(1, 41))
     gates = [{"name": "greenfield:requirements-traceability", "passed": False,
-              "detail": f"tests do not reference {ids}"}]
+              "detail": ids}]
     _state, detail = _rejected(gates)
     assert len(detail) <= 500
     headline = build_failure_headline(detail)
