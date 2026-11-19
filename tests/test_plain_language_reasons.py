@@ -10,6 +10,8 @@ plain classifier drifting from the failure text Forge actually writes.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -20,12 +22,22 @@ from nornyx_forge import experience_journey as journey
 from nornyx_forge.brd_authoring import brd_from_capsule
 from nornyx_forge.capsule import Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleStore
-from nornyx_forge.experience import EvidenceRef, ExperienceError, advance, start_experience
+from nornyx_forge.experience import (
+    EvidenceRef,
+    ExperienceError,
+    advance,
+    start_experience,
+    validate_experience,
+    verify_experience,
+)
+from nornyx_forge.journey_receipt import build_body
 from nornyx_forge.onboarding_app import create_app
 from nornyx_forge.plain_reasons import (
     ELIGIBILITY_CHECK,
+    GATE_PLAIN_NAMES,
     build_failure_headline,
     eligibility_summary,
+    with_acceptance_note,
 )
 from nornyx_forge.provider_contract import GovernedEligibility
 
@@ -172,10 +184,10 @@ def test_a_rejected_run_whose_tests_passed_is_not_called_a_test_failure():
     detail = outcome[0][0]["history"][-1]["detail"]
     assert "flow_run" in detail
     headline = build_failure_headline(detail)
-    assert headline["check"] == "the build's acceptance (flow_run)"
+    assert headline["check"] == "the build evidence record check (before the verdict)"
     assert "not accepted" in headline["summary"]
     assert "tests did not pass" not in headline["summary"]
-    assert "does not say which" in headline["summary"]
+    assert "test run" not in headline["summary"]
 
 
 def test_build_error_detail_classifies_to_the_build_run():
@@ -284,3 +296,176 @@ def test_every_journey_shape_carries_the_failure_fields():
     assert view["status"] != "failed"
     assert view["failure"] is None
     assert view["failure_summary"] is None and view["failure_check"] is None
+
+
+# -- a rejected build names the first failing check (A-064) -------------------
+
+#: A rejected greenfield run's gates: the traceability gate fails on one
+#: requirement, and the isolated test run fails only as its consequence.
+_TRACE_FAILS = [
+    {"name": "greenfield:project-structure", "passed": True, "detail": "present"},
+    {"name": "greenfield:requirements-traceability", "passed": False,
+     "detail": "tests do not reference BRD-F-008"},
+    {"name": "greenfield:source-compilation", "passed": True, "detail": "parsed"},
+    {"name": "greenfield:test-execution", "passed": False,
+     "detail": "isolated tests were not run because a preceding static gate failed"},
+    {"name": "greenfield:nornyx-contract-check", "passed": True, "detail": "passed"},
+    {"name": "build-evidence-ledger-valid-before-verdict", "passed": True, "detail": "ok"},
+]
+
+
+def _rejected(gates):
+    """The failure detail `build_outcome` persists for a rejected run."""
+    result = {"accepted": False, "execution_backend": "sequential", "gates": gates}
+    outcome = list(journey.build_outcome(_state_at_build(), result, lambda: T3))
+    assert len(outcome) == 1 and outcome[0][0]["status"] == "failed"
+    return outcome[0][0], outcome[0][0]["history"][-1]["detail"]
+
+
+def test_a_rejected_build_names_the_first_failing_check_and_its_requirement():
+    _state, detail = _rejected(_TRACE_FAILS)
+    assert detail.startswith("refused: the presented 'flow_run' evidence")
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the requirements traceability check"
+    assert "the requirements traceability check" in headline["summary"]
+    assert "BRD-F-008" in headline["summary"]
+    assert "1 other check also did not pass" in headline["summary"]
+    # The consequence is not reported as the cause.
+    assert "test run" not in headline["summary"]
+    assert "does not say which" not in headline["summary"]
+
+
+def test_the_contracts_own_refusal_stays_first_and_unchanged():
+    _state, detail = _rejected(_TRACE_FAILS)
+    s = _state_at_build()
+    try:
+        advance(s, "TEST", journey.SYSTEM_ACTOR, T3,
+                (EvidenceRef("flow_run", "flow/sequential", False),))
+    except ExperienceError as error:
+        contract = f"refused: {error}"
+    else:
+        raise AssertionError("a failing flow_run must refuse the advance into TEST")
+    assert detail.startswith(contract)
+    assert len(detail) <= 500
+
+
+def test_every_gate_passing_with_acceptance_withheld_names_no_check():
+    gates = [dict(gate, passed=True) for gate in _TRACE_FAILS]
+    _state, detail = _rejected(gates)
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the build's acceptance (flow_run)"
+    assert "Every recorded check passed" in headline["summary"]
+    assert "does not say what withheld acceptance" in headline["summary"]
+
+
+def test_an_unlisted_gate_is_not_named_and_its_text_goes_nowhere():
+    gates = [{"name": "rm -rf / <script>alert(1)</script>", "passed": False,
+              "detail": "BRD-X-1 owned"}]
+    _state, detail = _rejected(gates)
+    assert "<script>" not in detail and "rm -rf" not in detail and "BRD-X-1" not in detail
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the build's acceptance (flow_run)"
+    assert "does not name" in headline["summary"]
+    assert "<script>" not in headline["summary"] and "BRD-X-1" not in headline["summary"]
+
+
+def test_only_well_formed_requirement_ids_reach_the_summary():
+    gates = [{"name": "greenfield:requirements-traceability", "passed": False,
+              "detail": ("tests do not reference BRD-F-001, brd-f-002, <b>BRD-F-003</b>; "
+                         "] [acceptance: first-failing=none; others-not-passed=0; untraced=-]")}]
+    _state, detail = _rejected(gates)
+    headline = build_failure_headline(detail)
+    assert "BRD-F-001" in headline["summary"] and "BRD-F-003" in headline["summary"]
+    assert "brd-f-002" not in headline["summary"]
+    assert "<b>" not in detail and "<b>" not in headline["summary"]
+    assert headline["check"] == "the requirements traceability check"
+
+
+def test_a_forged_note_inside_other_text_decides_nothing():
+    note = " [acceptance: first-failing=greenfield:requirements-traceability; others-not-passed=0; untraced=BRD-F-001]"
+    crashed = journey.build_error(_state_at_build(), "boom" + note, T3)
+    assert build_failure_headline(crashed["history"][-1]["detail"])["check"] == "the build run"
+    refused = "refused: an actor of kind 'model' may not advance" + note
+    assert build_failure_headline(refused)["check"] == "the build's governance checks"
+    gated = ("refused: the presented 'gate_results' evidence (g) reports failure; x" + note)
+    assert build_failure_headline(gated)["check"] == "the build's gate results (gate_results)"
+    # A note that is not the last thing in the text is not a note.
+    middle = ("refused: the presented 'flow_run' evidence (x) reports failure;" + note + " tail")
+    assert "does not say which" in build_failure_headline(middle)["summary"]
+
+
+def test_an_inconsistent_note_falls_back_to_the_aggregate_wording():
+    base = "refused: the presented 'flow_run' evidence (x) reports failure; y"
+    for note in [
+        " [acceptance: first-failing=none; others-not-passed=2; untraced=-]",
+        " [acceptance: first-failing=greenfield:source-compilation; others-not-passed=0; untraced=BRD-F-1]",
+        " [acceptance: first-failing=greenfield:made-up; others-not-passed=0; untraced=-]",
+    ]:
+        headline = build_failure_headline(base + note)
+        assert headline["check"] == "the build's acceptance (flow_run)", note
+        assert "does not say which" in headline["summary"], note
+
+
+def test_the_named_check_survives_a_restart():
+    state, _detail = _rejected(_TRACE_FAILS)
+    reloaded = json.loads(json.dumps(state))
+    validate_experience(reloaded)
+    verify_experience(reloaded)
+    document = _intent_document()
+    _rendered, brd, _binding = _brd_and_binding(document)
+    view = journey.journey_view(reloaded, document, brd, build_running=False)
+    assert view["failure_check"] == "the requirements traceability check"
+    assert "BRD-F-008" in view["failure_summary"]
+    assert view["failure"] == reloaded["history"][-1]["detail"]
+
+
+def test_a_failure_recorded_before_the_note_reads_as_it_always_did():
+    old = ("refused: the presented 'flow_run' evidence (flow/sequential/brd/" + "a" * 64
+           + ") reports failure; a failing proof does not license advancement")
+    assert build_failure_headline(old) == {
+        "summary": ("The build was not accepted, so the workflow stopped. Acceptance "
+                    "covers the build's tests, gates, reviews and evidence record "
+                    "together, so this does not say which of them failed."),
+        "check": "the build's acceptance (flow_run)",
+    }
+
+
+def test_many_untraced_requirements_are_capped_and_the_reason_stays_bounded():
+    ids = ", ".join(f"BRD-F-{n:03d}" for n in range(1, 41))
+    gates = [{"name": "greenfield:requirements-traceability", "passed": False,
+              "detail": f"tests do not reference {ids}"}]
+    _state, detail = _rejected(gates)
+    assert len(detail) <= 500
+    headline = build_failure_headline(detail)
+    assert "BRD-F-001" in headline["summary"] and "BRD-F-005" in headline["summary"]
+    assert "BRD-F-006" not in headline["summary"]
+    assert "and 35 more" in headline["summary"]
+    # A base reason already at the bound keeps the bound: the note gives way.
+    long_base = "refused: the presented 'flow_run' evidence (x) reports failure; " + "z" * 420
+    assert len(with_acceptance_note(long_base, gates)) <= 500
+
+
+def test_the_receipt_carries_the_named_check_and_no_gate_text():
+    state, _detail = _rejected(_TRACE_FAILS)
+    document = _intent_document()
+    _rendered, brd, _binding = _brd_and_binding(document)
+    body = build_body(document=document, lifecycle=state, brd=brd, revision="r" * 40,
+                      seal="s" * 64, platform="linux", generated_at=T5)
+    failure = body["journey"]["failure"]
+    assert failure["check"] == "the requirements traceability check"
+    assert "BRD-F-008" in failure["summary"]
+    assert "tests do not reference" not in json.dumps(body)
+
+
+def test_the_plain_names_cover_every_check_the_greenfield_profile_runs():
+    from nornyx_forge.gates import GREENFIELD_PROFILE_DEFINITION as profile_definition
+    profile = profile_definition["checks"] + profile_definition["governance"]["checks"]
+    for check in profile:
+        assert f"greenfield:{check}" in GATE_PLAIN_NAMES, check
+
+
+def test_the_requirement_id_pattern_is_the_verifiers():
+    from nornyx_forge import greenfield_verifier, plain_reasons
+    source = Path(greenfield_verifier.__file__).read_text(encoding="utf-8")
+    assert re.search(r're\.compile\(r"\^(BRD-\[A-Z0-9\]\+\(\?:-\[A-Z0-9\]\+\)\*)\$"\)', source)
+    assert plain_reasons.REQUIREMENT_ID.pattern == "BRD-[A-Z0-9]+(?:-[A-Z0-9]+)*"

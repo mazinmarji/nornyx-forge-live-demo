@@ -53,7 +53,7 @@ from .experience_build import (
     flow_evidence,
     scope_reference,
 )
-from .plain_reasons import build_failure_headline
+from .plain_reasons import build_failure_headline, with_acceptance_note
 
 #: The actor under which the SURFACE ITSELF records evidence-driven
 #: transitions (BUILD -> TEST -> GOVERN) and build failures. A system actor
@@ -579,7 +579,12 @@ def build_outcome(
         try:
             current = advance(current, stage, SYSTEM_ACTOR, clock(), evidence)
         except ExperienceError as error:
-            yield fail(state, SYSTEM_ACTOR, _reason("refused", error), clock()), (
+            reason = _reason("refused", error)
+            if stage == "TEST" and result["accepted"] is False:
+                # A-064: what the rejected run's own gates say, in closed
+                # vocabulary, after the contract's words and within its bound.
+                reason = with_acceptance_note(reason, result["gates"])
+            yield fail(state, SYSTEM_ACTOR, reason, clock()), (
                 f"failed at {state['stage']}"
             )
             return

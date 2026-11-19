@@ -9114,3 +9114,56 @@ authority that matched no file, and nothing refused it.
 
 **Serves.** A greenfield build whose generated contract does not describe its
 code is refused instead of accepted.
+
+## A-064 A rejected build's plain summary names its first failing check and the requirements it found untested
+
+**The defect.** A build whose acceptance failed was summarised as "The build
+was not accepted, so the workflow stopped. Acceptance covers the build's
+tests, gates, reviews and evidence record together, so this does not say
+which of them failed." That was true of what the record held: the lifecycle
+persists one failure string, the contract's refusal of the advance into TEST,
+and `flow_run.passed` is the aggregate `accepted`. But `build_outcome` had the
+run's gates in hand and dropped them, so a person whose build failed on one
+untested requirement was told nothing they could act on, while the failing
+gate and the requirement sat in the build result -- which lives in the
+serving process and is gone after a restart.
+
+**The rule now.**
+- **The record carries it.** When the advance into TEST is refused and the
+  run's `accepted` is `False`, `build_outcome` appends an acceptance note to
+  the reason, after the contract's own words, which are unchanged:
+  `[acceptance: first-failing=<token>; others-not-passed=<n>; untraced=<ids>]`.
+- **Closed vocabulary only.** `<token>` is the first failing gate's name when
+  it is one of the fixed names in `plain_reasons.GATE_PLAIN_NAMES` (the
+  review-worker gates by their shape, without the role), `unlisted` for any
+  other name -- a repository-mode gate is named by its command line -- and
+  `none` when every gate passed. `<ids>` is read only from the
+  requirements-traceability gate's detail: up to five well-formed BRD
+  identifiers (`plain_reasons.REQUIREMENT_ID`, the verifier's own pattern,
+  restated and pinned equal by a test), then a count. No gate name or detail
+  text is copied.
+- **The bound holds.** The reason stays within the 500 characters
+  `experience.fail` allows: the identifiers give way to a count, then the
+  note is left out.
+- **Read strictly.** `build_failure_headline` reads the note only when it is
+  the last thing in a `flow_run` refusal and is consistent (a known token; no
+  count or identifiers beside `none`; identifiers only on traceability).
+  Anything else, and every failure recorded before this change, gets the
+  aggregate wording, exactly as before.
+- **The same words everywhere.** The journey view, the served page and the
+  journey receipt all render the headline; none of them changed. The receipt
+  gains the fixed sentence and the identifiers, never gate text.
+
+**Bounds stated here.**
+- The note names the FIRST failing gate in the order the run recorded them.
+  A later gate that failed only because of it (the isolated test run is not
+  run after a failed static gate) is counted, not named.
+- Identifiers are named only for the traceability gate; another gate's
+  detail is not read.
+- `none` says every recorded gate passed and acceptance was withheld anyway;
+  it does not say why.
+- Nothing here changes a gate, the verifier, the gate profile, the
+  Experience Contract or any acceptance decision.
+
+**Serves.** A person whose build failed is told, in plain words, which check
+stopped it and which requirement the tests do not cover.
